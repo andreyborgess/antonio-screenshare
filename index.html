@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Antonio Screenshare — Transmissão de Tela e Voz P2P</title>
+    <meta name="description" content="Compartilhe tela em 1080p 60fps, câmera e microfone com cancelamento de ruído em salas privadas WebRTC. Sem cadastro, sem instalação e com privacidade total." />
+    <meta name="theme-color" content="#07080b" />
+    
+    <!-- Open Graph / Social Sharing Meta -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Antonio Screenshare" />
+    <meta property="og:title" content="Antonio Screenshare — Transmissão de Tela e Voz em Tempo Real" />
+    <meta property="og:description" content="Salas privadas WebRTC para compartilhamento de tela em alta fidelidade e áudio cristalino. Sem conta, sem rastros." />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Google Fonts Preconnect & Subsets -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Vector Favicon: Radar Pulse Mark -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2307080b'/%3E%3Ccircle cx='32' cy='32' r='24' fill='none' stroke='%2322273a' stroke-width='2'/%3E%3Ccircle cx='32' cy='32' r='16' fill='none' stroke='%23a78bfa' stroke-width='2.5' stroke-dasharray='4 3'/%3E%3Ccircle cx='32' cy='32' r='8' fill='%234fe7c4'/%3E%3C/svg%3E" />
+  </head>
+  <body class="min-h-full flex flex-col bg-abyss text-paper antialiased">
+    <!-- Accessible Skip to Content Link for Keyboard Navigation -->
+    <a href="#main-content" class="skip-link">Pular para o conteúdo principal</a>
+
+    <!-- Subtle Film Grain Noise Overlay (Analog Hardware Depth) -->
+    <div class="film-noise" aria-hidden="true"></div>
+
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
