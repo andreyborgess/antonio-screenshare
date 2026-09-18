@@ -12,12 +12,12 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// API: Create a room
+// API: Create a room (or get/create with custom code)
 app.post('/api/rooms', (req, res) => {
-  const { password } = req.body || {};
+  const { password, customCode } = req.body || {};
   try {
-    const room = createRoom(password);
-    console.log(`[ROOM CREATED] Code: ${room.code}, Protected: ${!!room.password}`);
+    const room = createRoom(password, customCode);
+    console.log(`[ROOM CREATED/SYNCED] Code: ${room.code}, Protected: ${!!room.password}`);
     return res.status(200).json({ code: room.code });
   } catch (err) {
     console.error('Error creating room:', err);
@@ -28,9 +28,13 @@ app.post('/api/rooms', (req, res) => {
 // API: Check room & verify password for joining
 app.post('/api/rooms/:code/join', (req, res) => {
   const code = (req.params.code || '').toUpperCase();
-  const { password } = req.body || {};
+  const { password, autoCreate } = req.body || {};
 
-  const room = getRoom(code);
+  let room = getRoom(code);
+  if (!room && autoCreate) {
+    room = createRoom(null, code);
+  }
+
   if (!room) {
     return res.status(404).json({ error: 'Sala não encontrada.' });
   }

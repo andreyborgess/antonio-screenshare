@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { playMuteSound, playJoinSound, playLeaveSound } from '../utils/sounds';
+import { getWsUrl } from '../utils/discord';
 
 const AVATAR_COLORS = ['#a78bfa', '#4fe7c4', '#f472b6', '#fb923c', '#60a5fa', '#facc15'];
 
@@ -392,17 +393,7 @@ export function useWebRTC({ roomCode, displayName }) {
   useEffect(() => {
     if (!roomCode) return;
 
-    const envBackend = import.meta.env.VITE_BACKEND_URL;
-    let wsUrl;
-    if (envBackend) {
-      const wsProto = envBackend.startsWith('https') ? 'wss:' : 'ws:';
-      const cleanHost = envBackend.replace(/^https?:\/\//, '').replace(/\/$/, '');
-      wsUrl = `${wsProto}//${cleanHost}/ws`;
-    } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      wsUrl = `${protocol}//${host}/ws`;
-    }
+    const wsUrl = getWsUrl();
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

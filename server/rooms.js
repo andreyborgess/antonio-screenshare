@@ -14,11 +14,16 @@ export function generateRoomCode() {
   return code;
 }
 
-export function createRoom(password = null) {
-  let code;
-  do {
-    code = generateRoomCode();
-  } while (rooms.has(code));
+export function createRoom(password = null, customCode = null) {
+  let code = customCode ? String(customCode).trim().toUpperCase() : null;
+  if (code && rooms.has(code)) {
+    return rooms.get(code);
+  }
+  if (!code) {
+    do {
+      code = generateRoomCode();
+    } while (rooms.has(code));
+  }
 
   const room = {
     code,

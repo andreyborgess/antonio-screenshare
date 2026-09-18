@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useWebRTC, getAvatarColor, getInitials } from '../hooks/useWebRTC';
+import { getApiBase, isDiscordActivity } from '../utils/discord';
 import BackgroundRipples from './BackgroundRipples';
 import DisplayNameModal, { getStoredDisplayName } from './DisplayNameModal';
 import ScreenSettingsModal from './ScreenSettingsModal';
+import DiscordStreamModal from './DiscordStreamModal';
 import SidebarChat from './SidebarChat';
 import ControlBar from './ControlBar';
 import VideoTile from './VideoTile';
@@ -39,8 +41,10 @@ export default function RoomExperience({ code, onLeave }) {
   const [displayName, setDisplayName] = useState(() => getStoredDisplayName() || 'Anônimo');
   const [showNameModal, setShowNameModal] = useState(false);
   const [showScreenModal, setShowScreenModal] = useState(false);
+  const [showDiscordModal, setShowDiscordModal] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [pinnedStreamId, setPinnedStreamId] = useState(null);
+  const isDiscord = isDiscordActivity();
 
   // Mixer de volume individual por participante salvo localmente
   const [peerVolumes, setPeerVolumes] = useState(() => {
@@ -96,11 +100,12 @@ export default function RoomExperience({ code, onLeave }) {
     async function verify() {
       try {
         const storedName = getStoredDisplayName();
-        const apiBase = import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL.replace(/\/$/, '') : '';
+        const apiBase = getApiBase();
+        const autoCreate = isDiscord || code.startsWith('DC');
         const res = await fetch(`${apiBase}/api/rooms/${code}/join`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: storedName || 'Anônimo' })
+          body: JSON.stringify({ name: storedName || 'Anônimo', autoCreate })
         });
 
         if (res.status === 401) {
@@ -120,7 +125,7 @@ export default function RoomExperience({ code, onLeave }) {
       }
     }
     verify();
-  }, [code]);
+  }, [code, isDiscord]);
 
   // Submit Password Form
   async function handlePasswordSubmit(e) {
@@ -130,7 +135,7 @@ export default function RoomExperience({ code, onLeave }) {
 
     try {
       const storedName = getStoredDisplayName();
-      const apiBase = import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL.replace(/\/$/, '') : '';
+      const apiBase = getApiBase();
       const res = await fetch(`${apiBase}/api/rooms/${code}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,7 +162,8 @@ export default function RoomExperience({ code, onLeave }) {
 
   // Copy Invite Link
   async function copyInviteLink() {
-    const inviteUrl = `${window.location.origin}/room/${code}`;
+    const origin = isDiscord ? 'https://screen-flax.vercel.app' : window.location.origin;
+    const inviteUrl = `${origin}/room/${code}`;
     try {
       await navigator.clipboard.writeText(inviteUrl);
       setCopiedInvite(true);
@@ -492,6 +498,24 @@ export default function RoomExperience({ code, onLeave }) {
               {networkStats.fps ? <span style={{ color: 'var(--fog)' }}>• {networkStats.fps} fps</span> : null}
             </span>
           )}
+          {isDiscord && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '0.2rem 0.55rem',
+                borderRadius: '9999px',
+                backgroundColor: 'rgba(88, 101, 242, 0.15)',
+                border: '1px solid rgba(88, 101, 242, 0.35)',
+                color: '#5865F2'
+              }}
+            >
+              <span>🎮 Discord Activity</span>
+            </span>
+          )}
         </div>
 
         {/* Copy Invite Link Button */}
@@ -503,11 +527,11 @@ export default function RoomExperience({ code, onLeave }) {
             style={{
               padding: '0.4rem 0.85rem',
               fontSize: '0.8125rem',
-              borderColor: copiedInvite ? 'var(--signal)' : 'var(--hairline)',
-              color: copiedInvite ? 'var(--signal)' : 'var(--paper)'
+              borderColor: copiedInvite ? 'var(--signal)' : isDiscord ? 'rgba(88, 101, 242, 0.4)' : 'var(--hairline)',
+              color: copiedInvite ? 'var(--signal)' : isDiscord ? '#5865F2' : 'var(--paper)'
             }}
           >
-            {copiedInvite ? 'Link copiado! ✓' : 'Copiar link'}
+            {copiedInvite ? 'Link copiado! ✓' : isDiscord ? 'Copiar link (Navegador)' : 'Copiar link'}
           </button>
         </div>
       </header>
@@ -623,24 +647,44 @@ export default function RoomExperience({ code, onLeave }) {
 
                     <div>
                       <h2 className="font-display" style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--paper)', letterSpacing: '-0.02em' }}>
-                        Pronto para transmitir
+                        {isDiscord ? 'Aguardando transmissão' : 'Pronto para transmitir'}
                       </h2>
                       <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--fog)', lineHeight: 1.5 }}>
-                        Olá, <strong style={{ color: 'var(--paper)' }}>{displayName}</strong>! Compartilhe sua tela em até 1080p 60fps ou abra sua câmera com os botões abaixo.
+                        {isDiscord ? (
+                          <>
+                            Conectado à chamada do Discord! Abra o link no <strong style={{ color: 'var(--paper)' }}>Chrome ou Edge</strong> no PC para transmitir em 1080p 60fps com som do Windows sem bloqueios.
+                          </>
+                        ) : (
+                          <>
+                            Olá, <strong style={{ color: 'var(--paper)' }}>{displayName}</strong>! Compartilhe sua tela em até 1080p 60fps ou abra sua câmera com os botões abaixo.
+                          </>
+                        )}
                       </p>
                     </div>
 
                     {/* Quick action buttons */}
                     <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={() => setShowScreenModal(true)}
-                        className="btn-nested-cta"
-                        style={{ padding: '0.5rem 1rem' }}
-                      >
-                        <span>Compartilhar Tela</span>
-                        <span className="btn-nested-circle">🖥️</span>
-                      </button>
+                      {isDiscord ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowDiscordModal(true)}
+                          className="btn-nested-cta"
+                          style={{ padding: '0.5rem 1rem', borderColor: 'rgba(88, 101, 242, 0.5)' }}
+                        >
+                          <span>Como Transmitir pelo PC</span>
+                          <span className="btn-nested-circle" style={{ backgroundColor: '#5865F2' }}>🚀</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowScreenModal(true)}
+                          className="btn-nested-cta"
+                          style={{ padding: '0.5rem 1rem' }}
+                        >
+                          <span>Compartilhar Tela</span>
+                          <span className="btn-nested-circle">🖥️</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -687,6 +731,8 @@ export default function RoomExperience({ code, onLeave }) {
             onToggleScreenShare={() => {
               if (isScreenSharing) {
                 stopScreenShare();
+              } else if (isDiscord) {
+                setShowDiscordModal(true);
               } else {
                 setShowScreenModal(true);
               }
@@ -728,6 +774,14 @@ export default function RoomExperience({ code, onLeave }) {
             setShowNameModal(false);
           }}
           onCancel={() => setShowNameModal(false)}
+        />
+      )}
+
+      {/* Discord Stream Info Modal */}
+      {showDiscordModal && (
+        <DiscordStreamModal
+          roomCode={code}
+          onClose={() => setShowDiscordModal(false)}
         />
       )}
     </div>

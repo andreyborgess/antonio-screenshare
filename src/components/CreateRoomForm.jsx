@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getApiBase } from '../utils/discord';
 
 export default function CreateRoomForm({ onRoomCreated }) {
   const [password, setPassword] = useState('');
@@ -11,7 +12,7 @@ export default function CreateRoomForm({ onRoomCreated }) {
     setError(null);
 
     try {
-      const apiBase = import.meta.env.VITE_BACKEND_URL ? import.meta.env.VITE_BACKEND_URL.replace(/\/$/, '') : '';
+      const apiBase = getApiBase();
       const res = await fetch(`${apiBase}/api/rooms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
