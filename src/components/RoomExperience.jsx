@@ -9,7 +9,7 @@ import VideoTile from './VideoTile';
 import ReactionBar from './ReactionBar';
 import ReactionOverlay from './ReactionOverlay';
 
-function RemoteAudio({ stream }) {
+function RemoteAudio({ stream, volume = 1 }) {
   const audioRef = useRef(null);
 
   useEffect(() => {
@@ -20,6 +20,12 @@ function RemoteAudio({ stream }) {
       });
     }
   }, [stream]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = Math.max(0, Math.min(1, typeof volume === 'number' ? volume : 1));
+    }
+  }, [volume]);
 
   return <audio ref={audioRef} autoPlay playsInline style={{ display: 'none' }} />;
 }
@@ -36,6 +42,25 @@ export default function RoomExperience({ code, onLeave }) {
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [pinnedStreamId, setPinnedStreamId] = useState(null);
 
+  // Mixer de volume individual por participante salvo localmente
+  const [peerVolumes, setPeerVolumes] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('antonio:peerVolumes') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  const handleSetPeerVolume = (peerId, vol) => {
+    setPeerVolumes((prev) => {
+      const updated = { ...prev, [peerId]: vol };
+      try {
+        localStorage.setItem('antonio:peerVolumes', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
   // WebRTC Hook
   const {
     connectionStatus,
@@ -50,6 +75,8 @@ export default function RoomExperience({ code, onLeave }) {
     peerMicMutedMap,
     activeReactions,
     remoteStreams,
+    networkStats,
+    audioLevels,
     isScreenSharing,
     isCameraOn,
     toggleMicrophone,
@@ -319,7 +346,8 @@ export default function RoomExperience({ code, onLeave }) {
       {/* Invisible audio elements for playing remote participants' voices */}
       {Object.entries(remoteStreams).map(([peerId, data]) => {
         if (data.audioStream) {
-          return <RemoteAudio key={`audio-${peerId}`} stream={data.audioStream} />;
+          const vol = typeof peerVolumes[peerId] === 'number' ? peerVolumes[peerId] : 1;
+          return <RemoteAudio key={`audio-${peerId}`} stream={data.audioStream} volume={vol} />;
         }
         return null;
       })}
@@ -429,19 +457,42 @@ export default function RoomExperience({ code, onLeave }) {
           <span style={{ fontSize: '0.6875rem', color: 'var(--fog)' }}>✎</span>
         </button>
 
-        {/* Connection Status */}
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--fog)' }}>
-          <span
-            style={{
-              width: '0.45rem',
-              height: '0.45rem',
-              borderRadius: '9999px',
-              backgroundColor: connectionStatus === 'connected' ? 'var(--signal)' : 'var(--fog)',
-              boxShadow: connectionStatus === 'connected' ? '0 0 8px var(--signal)' : 'none'
-            }}
-          />
-          {connectionStatus === 'connected' ? 'ao vivo' : connectionStatus}
-        </span>
+        {/* Connection Status & WebRTC Telemetry Badge */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.625rem' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--fog)' }}>
+            <span
+              style={{
+                width: '0.45rem',
+                height: '0.45rem',
+                borderRadius: '9999px',
+                backgroundColor: connectionStatus === 'connected' ? 'var(--signal)' : 'var(--fog)',
+                boxShadow: connectionStatus === 'connected' ? '0 0 8px var(--signal)' : 'none'
+              }}
+            />
+            {connectionStatus === 'connected' ? 'ao vivo' : connectionStatus}
+          </span>
+
+          {connectionStatus === 'connected' && networkStats?.ping !== null && (
+            <span
+              title={`Latência estimada de ida e volta: ${networkStats.ping}ms`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.7rem',
+                fontFamily: 'var(--font-mono)',
+                padding: '0.15rem 0.5rem',
+                borderRadius: '0.35rem',
+                backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--hairline)',
+                color: networkStats.quality === 'good' ? 'var(--signal)' : networkStats.quality === 'fair' ? '#fbbf24' : 'var(--danger)'
+              }}
+            >
+              <span>{networkStats.ping}ms</span>
+              {networkStats.fps ? <span style={{ color: 'var(--fog)' }}>• {networkStats.fps} fps</span> : null}
+            </span>
+          )}
+        </div>
 
         {/* Copy Invite Link Button */}
         <div style={{ marginLeft: 'auto' }}>
@@ -631,6 +682,7 @@ export default function RoomExperience({ code, onLeave }) {
             isScreenSharing={isScreenSharing}
             isCameraOn={isCameraOn}
             isMicMuted={isMicMuted}
+            audioLevels={audioLevels}
             onToggleMicrophone={toggleMicrophone}
             onToggleScreenShare={() => {
               if (isScreenSharing) {
@@ -650,6 +702,8 @@ export default function RoomExperience({ code, onLeave }) {
           chatMessages={chatMessages}
           peerSpeakingMap={combinedSpeakingMap}
           peerMicMutedMap={combinedMutedMap}
+          peerVolumes={peerVolumes}
+          onSetPeerVolume={handleSetPeerVolume}
           onSendMessage={sendChatMessage}
         />
       </div>

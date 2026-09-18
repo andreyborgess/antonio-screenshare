@@ -20,7 +20,7 @@ function setStoredVolume(identity, vol) {
   } catch {}
 }
 
-export default function VideoTile({
+function VideoTile({
   stream,
   participantName = 'Participante',
   participantId = '',
@@ -34,6 +34,37 @@ export default function VideoTile({
   const [volume, setVolume] = useState(() => getStoredVolume(participantId));
   const [isMuted, setIsMuted] = useState(false);
   const [hasAudioTrack, setHasAudioTrack] = useState(false);
+  const [isPiP, setIsPiP] = useState(false);
+  const isPiPSupported = typeof document !== 'undefined' && !!document.pictureInPictureEnabled;
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    const handleEnterPiP = () => setIsPiP(true);
+    const handleLeavePiP = () => setIsPiP(false);
+
+    videoEl.addEventListener('enterpictureinpicture', handleEnterPiP);
+    videoEl.addEventListener('leavepictureinpicture', handleLeavePiP);
+
+    return () => {
+      videoEl.removeEventListener('enterpictureinpicture', handleEnterPiP);
+      videoEl.removeEventListener('leavepictureinpicture', handleLeavePiP);
+    };
+  }, []);
+
+  async function togglePictureInPicture(e) {
+    e.stopPropagation();
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (videoRef.current) {
+        await videoRef.current.requestPictureInPicture();
+      }
+    } catch (err) {
+      console.warn('Picture-in-Picture error:', err);
+    }
+  }
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -91,6 +122,43 @@ export default function VideoTile({
           objectFit: source === 'screen' ? 'contain' : 'cover'
         }}
       />
+
+      {/* Picture-in-Picture Button */}
+      {isPiPSupported && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '0.75rem',
+            right: '0.75rem',
+            zIndex: 12
+          }}
+        >
+          <button
+            type="button"
+            onClick={togglePictureInPicture}
+            title={isPiP ? 'Sair do Picture-in-Picture' : 'Assistir em janela flutuante (Picture-in-Picture)'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '2rem',
+              height: '2rem',
+              borderRadius: '0.5rem',
+              backgroundColor: isPiP ? 'var(--signal)' : 'rgba(7, 8, 11, 0.75)',
+              color: isPiP ? '#07080b' : 'var(--paper)',
+              backdropFilter: 'blur(8px)',
+              border: isPiP ? '1px solid var(--signal)' : '1px solid var(--hairline)',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <rect x="12" y="10" width="8" height="6" rx="1" fill={isPiP ? '#07080b' : 'currentColor'} />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Participant Badge Overlay */}
       <div
@@ -215,3 +283,5 @@ export default function VideoTile({
     </div>
   );
 }
+
+export default React.memo(VideoTile);

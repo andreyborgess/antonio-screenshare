@@ -1,9 +1,44 @@
 import React from 'react';
 
+function VuMeter({ level = 0, color = 'var(--signal)' }) {
+  const thresholds = [10, 30, 60, 85];
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'flex-end',
+        gap: '2px',
+        height: '14px',
+        marginLeft: '0.25rem'
+      }}
+      title={`Nível de áudio: ${level}%`}
+    >
+      {thresholds.map((th, idx) => {
+        const active = level >= th;
+        const barColor = idx === 3 && active ? 'var(--danger)' : active ? color : 'rgba(255, 255, 255, 0.15)';
+        return (
+          <span
+            key={th}
+            style={{
+              width: '2.5px',
+              height: `${4 + idx * 3}px`,
+              borderRadius: '1px',
+              backgroundColor: barColor,
+              transition: 'background-color 0.08s ease, transform 0.08s ease',
+              transform: active ? 'scaleY(1.15)' : 'scaleY(1)'
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ControlBar({
   isScreenSharing,
   isCameraOn,
   isMicMuted,
+  audioLevels = { mic: 0, screen: 0 },
   onToggleScreenShare,
   onToggleCamera,
   onToggleMicrophone,
@@ -55,6 +90,7 @@ export default function ControlBar({
           </svg>
         )}
         <span>{isMicMuted ? 'Desmutar' : 'Mutar microfone'}</span>
+        {!isMicMuted && <VuMeter level={audioLevels.mic} color="var(--signal)" />}
       </button>
 
       {/* Screen Share Button */}
@@ -72,6 +108,7 @@ export default function ControlBar({
           <line x1="12" y1="17" x2="12" y2="21" />
         </svg>
         <span>{isScreenSharing ? 'Parar compartilhamento' : 'Compartilhar tela'}</span>
+        {isScreenSharing && <VuMeter level={audioLevels.screen} color="var(--orchid)" />}
       </button>
 
       {/* Camera Toggle Button */}

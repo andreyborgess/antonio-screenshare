@@ -1,11 +1,103 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { getAvatarColor, getInitials } from '../hooks/useWebRTC';
 
+function ParticipantVolumeControl({ peerId, volume = 1, onSetVolume }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const currentVol = typeof volume === 'number' ? volume : 1;
+  const isMuted = currentVol === 0;
+
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        title={`Ajustar volume de voz (${Math.round(currentVol * 100)}%)`}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: isMuted ? 'var(--danger)' : currentVol < 0.5 ? 'var(--fog)' : 'var(--signal)',
+          cursor: 'pointer',
+          padding: '0.2rem',
+          display: 'flex',
+          alignItems: 'center',
+          borderRadius: '0.25rem',
+          transition: 'transform 0.15s ease'
+        }}
+      >
+        {isMuted ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 9v6h4l5 5V4L8 9H4z" />
+            <line x1="23" y1="9" x2="17" y2="15" stroke="currentColor" strokeWidth="2.5" />
+            <line x1="17" y1="9" x2="23" y2="15" stroke="currentColor" strokeWidth="2.5" />
+          </svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 9v6h4l5 5V4L8 9H4z" />
+            <path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12z" />
+          </svg>
+        )}
+      </button>
+
+      {isOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            right: '100%',
+            marginRight: '0.5rem',
+            backgroundColor: 'rgba(10, 13, 20, 0.95)',
+            border: '1px solid var(--hairline)',
+            borderRadius: '0.5rem',
+            padding: '0.4rem 0.65rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+            zIndex: 40,
+            backdropFilter: 'blur(12px)',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onSetVolume(peerId, isMuted ? 1 : 0)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '0.6875rem',
+              color: isMuted ? 'var(--danger)' : 'var(--signal)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              padding: 0
+            }}
+          >
+            {isMuted ? 'Desmutar' : 'Mutar'}
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={currentVol}
+            onChange={(e) => onSetVolume(peerId, parseFloat(e.target.value))}
+            style={{ width: '4rem', accentColor: 'var(--signal)', cursor: 'pointer' }}
+          />
+          <span style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--paper)', minWidth: '2.3rem' }}>
+            {Math.round(currentVol * 100)}%
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SidebarChat({
   participants = [],
   chatMessages = [],
   peerSpeakingMap = {},
   peerMicMutedMap = {},
+  peerVolumes = {},
+  onSetPeerVolume = () => {},
   onSendMessage
 }) {
   const [inputText, setInputText] = useState('');
@@ -109,6 +201,15 @@ export default function SidebarChat({
                       <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                     </svg>
                   </span>
+                )}
+
+                {/* Individual Participant Voice Volume Slider */}
+                {!p.isLocal && (
+                  <ParticipantVolumeControl
+                    peerId={p.socketId}
+                    volume={peerVolumes[p.socketId] ?? 1}
+                    onSetVolume={onSetPeerVolume}
+                  />
                 )}
               </li>
             );

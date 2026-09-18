@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { playMuteSound, playJoinSound, playLeaveSound } from '../utils/sounds';
 
 const AVATAR_COLORS = ['#a78bfa', '#4fe7c4', '#f472b6', '#fb923c', '#60a5fa', '#facc15'];
 
@@ -21,6 +22,84 @@ const ICE_SERVERS = {
   ]
 };
 
+// Configura parâmetros de codificação e degradação no RTCRtpSender para evitar queda drástica de FPS
+async function applySenderParameters(sender, track, settings = {}) {
+  if (!sender || !track) return;
+  try {
+    if (track.kind === 'video') {
+      const hint = settings?.contentHint || (settings?.mode === 'detail' ? 'detail' : 'motion');
+      try {
+        track.contentHint = hint;
+      } catch {}
+    }
+
+    const params = sender.getParameters();
+    if (!params) return;
+
+    // degradationPreference: 'maintain-framerate' instrui o navegador a manter a fluidez (60fps)
+    // sem descartar quadros desnecessariamente em caso de oscilação
+    const degPref = settings?.degradationPreference || (settings?.mode === 'detail' ? 'maintain-resolution' : 'maintain-framerate');
+    if ('degradationPreference' in params || typeof params.degradationPreference !== 'undefined') {
+      params.degradationPreference = degPref;
+    }
+
+    const maxBitrate = settings?.maxBitrate || 3500000;
+    const maxFramerate = settings?.frameRate || 60;
+
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}];
+    }
+
+    params.encodings[0].maxBitrate = maxBitrate;
+    params.encodings[0].maxFramerate = maxFramerate;
+    params.encodings[0].priority = 'high';
+    params.encodings[0].networkPriority = 'high';
+
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn('Unable to apply video sender parameters:', err);
+  }
+}
+
+// Prioriza codec H.264 com aceleração por hardware (GPU NVENC/QuickSync/AMF)
+function preferH264Codec(pc) {
+  try {
+    if (!pc.getTransceivers || !window.RTCRtpReceiver?.getCapabilities) return;
+    const transceivers = pc.getTransceivers();
+    transceivers.forEach((t) => {
+      const isVideo = t.sender?.track?.kind === 'video' || t.receiver?.track?.kind === 'video';
+      if (isVideo && t.setCodecPreferences) {
+        const capabilities = window.RTCRtpReceiver.getCapabilities('video');
+        if (capabilities && capabilities.codecs) {
+          const h264 = capabilities.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+          const others = capabilities.codecs.filter((c) => c.mimeType.toLowerCase() !== 'video/h264');
+          if (h264.length > 0) {
+            t.setCodecPreferences([...h264, ...others]);
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('Could not set H264 preference:', e);
+  }
+}
+
+// Injeta parâmetros estéreo e alta taxa de amostragem Opus (196 kbps estéreo) no SDP
+function enrichSdpWithStereoOpus(sdp) {
+  if (!sdp || typeof sdp !== 'string') return sdp;
+  return sdp.replace(/a=fmtp:(\d+)\s+([\s\S]*?)(?=\r?\n|$)/g, (fullMatch, pt, params) => {
+    const opusRegex = new RegExp(`a=rtpmap:${pt}\\s+opus\\/48000`, 'i');
+    if (opusRegex.test(sdp)) {
+      let updatedParams = params;
+      if (!updatedParams.includes('stereo=')) updatedParams += ';stereo=1';
+      if (!updatedParams.includes('sprop-stereo=')) updatedParams += ';sprop-stereo=1';
+      if (!updatedParams.includes('maxaveragebitrate=')) updatedParams += ';maxaveragebitrate=196000';
+      return `a=fmtp:${pt} ${updatedParams}`;
+    }
+    return fullMatch;
+  });
+}
+
 export function useWebRTC({ roomCode, displayName }) {
   const [connectionStatus, setConnectionStatus] = useState('connecting'); // connecting | connected | disconnected | error
   const [participants, setParticipants] = useState([]); // [{ socketId, name, identity, isLocal }]
@@ -28,6 +107,8 @@ export function useWebRTC({ roomCode, displayName }) {
   const [localScreenStream, setLocalScreenStream] = useState(null);
   const [localCameraStream, setLocalCameraStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({}); // { [peerId]: { screenStream, cameraStream, audioStream, name } }
+  const [networkStats, setNetworkStats] = useState({ ping: null, fps: null, quality: 'good' });
+  const [audioLevels, setAudioLevels] = useState({ mic: 0, screen: 0 });
 
   // Microphone & Speaking States
   const [localMicStream, setLocalMicStream] = useState(null);
@@ -41,6 +122,8 @@ export function useWebRTC({ roomCode, displayName }) {
   const localSocketIdRef = useRef(null);
   const peerConnectionsRef = useRef(new Map()); // peerSocketId -> RTCPeerConnection
   const candidateQueueRef = useRef(new Map()); // peerSocketId -> RTCIceCandidate[]
+  const screenSettingsRef = useRef(null);
+  const screenAnalyserRef = useRef(null);
   const localScreenRef = useRef(null);
   const localCameraRef = useRef(null);
   const localMicRef = useRef(null);
@@ -105,7 +188,10 @@ export function useWebRTC({ roomCode, displayName }) {
     }
     if (localScreenRef.current) {
       localScreenRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localScreenRef.current);
+        const sender = pc.addTrack(track, localScreenRef.current);
+        if (track.kind === 'video' && screenSettingsRef.current) {
+          applySenderParameters(sender, track, screenSettingsRef.current);
+        }
       });
     }
     if (localCameraRef.current) {
@@ -158,7 +244,11 @@ export function useWebRTC({ roomCode, displayName }) {
     pc.onnegotiationneeded = async () => {
       if (!isInitiator) return;
       try {
+        preferH264Codec(pc);
         const offer = await pc.createOffer();
+        if (offer.sdp) {
+          offer.sdp = enrichSdpWithStereoOpus(offer.sdp);
+        }
         await pc.setLocalDescription(offer);
         sendWs({
           type: 'offer',
@@ -220,38 +310,54 @@ export function useWebRTC({ roomCode, displayName }) {
             let silenceCount = 0;
 
             vadIntervalRef.current = setInterval(() => {
+              let micAvg = 0;
               if (isMicMutedRef.current) {
                 if (currentlySpeaking) {
                   currentlySpeaking = false;
                   setIsSpeaking(false);
                   sendWs({ type: 'speaking-state', isSpeaking: false });
                 }
-                return;
-              }
-
-              analyser.getByteFrequencyData(dataArray);
-              let sum = 0;
-              for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
-              }
-              const average = sum / bufferLength;
-
-              // Threshold for speech detection
-              if (average > 18) {
-                silenceCount = 0;
-                if (!currentlySpeaking) {
-                  currentlySpeaking = true;
-                  setIsSpeaking(true);
-                  sendWs({ type: 'speaking-state', isSpeaking: true });
-                }
               } else {
-                silenceCount++;
-                if (silenceCount > 4 && currentlySpeaking) {
-                  currentlySpeaking = false;
-                  setIsSpeaking(false);
-                  sendWs({ type: 'speaking-state', isSpeaking: false });
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                  sum += dataArray[i];
+                }
+                micAvg = sum / bufferLength;
+
+                // Threshold for speech detection
+                if (micAvg > 18) {
+                  silenceCount = 0;
+                  if (!currentlySpeaking) {
+                    currentlySpeaking = true;
+                    setIsSpeaking(true);
+                    sendWs({ type: 'speaking-state', isSpeaking: true });
+                  }
+                } else {
+                  silenceCount++;
+                  if (silenceCount > 4 && currentlySpeaking) {
+                    currentlySpeaking = false;
+                    setIsSpeaking(false);
+                    sendWs({ type: 'speaking-state', isSpeaking: false });
+                  }
                 }
               }
+
+              // Mede o volume de áudio do sistema caso compartilhado
+              let screenAvg = 0;
+              if (screenAnalyserRef.current) {
+                try {
+                  const sBuffer = new Uint8Array(screenAnalyserRef.current.frequencyBinCount);
+                  screenAnalyserRef.current.getByteFrequencyData(sBuffer);
+                  let sSum = 0;
+                  for (let i = 0; i < sBuffer.length; i++) sSum += sBuffer[i];
+                  screenAvg = sSum / sBuffer.length;
+                } catch {}
+              }
+
+              const micLevel = isMicMutedRef.current ? 0 : Math.min(100, Math.round((micAvg / 85) * 100));
+              const screenLevel = Math.min(100, Math.round((screenAvg / 85) * 100));
+              setAudioLevels({ mic: micLevel, screen: screenLevel });
             }, 100);
           }
         } catch (audioErr) {
@@ -335,8 +441,12 @@ export function useWebRTC({ roomCode, displayName }) {
             // Initiate WebRTC connection to all existing peers
             msg.peers.forEach((peer) => {
               const pc = getOrCreatePeerConnection(peer.socketId, true);
+              preferH264Codec(pc);
               pc.createOffer()
-                .then((offer) => pc.setLocalDescription(offer))
+                .then((offer) => {
+                  if (offer.sdp) offer.sdp = enrichSdpWithStereoOpus(offer.sdp);
+                  return pc.setLocalDescription(offer);
+                })
                 .then(() => {
                   sendWs({
                     type: 'offer',
@@ -350,6 +460,7 @@ export function useWebRTC({ roomCode, displayName }) {
           }
 
           case 'peer-joined': {
+            playJoinSound();
             setParticipants((prev) => {
               if (prev.some((p) => p.socketId === msg.peer.socketId)) return prev;
               return [...prev, { ...msg.peer, isLocal: false }];
@@ -369,6 +480,7 @@ export function useWebRTC({ roomCode, displayName }) {
           }
 
           case 'peer-left': {
+            playLeaveSound();
             setParticipants((prev) => prev.filter((p) => p.socketId !== msg.socketId));
 
             // Close WebRTC connection
@@ -459,7 +571,11 @@ export function useWebRTC({ roomCode, displayName }) {
             }
             candidateQueueRef.current.delete(msg.senderId);
 
+            preferH264Codec(pc);
             const answer = await pc.createAnswer();
+            if (answer.sdp) {
+              answer.sdp = enrichSdpWithStereoOpus(answer.sdp);
+            }
             await pc.setLocalDescription(answer);
 
             sendWs({
@@ -542,6 +658,54 @@ export function useWebRTC({ roomCode, displayName }) {
     };
   }, [roomCode, getOrCreatePeerConnection, sendWs]);
 
+  // Periodically collect WebRTC connection statistics (RTT / Ping and FPS)
+  useEffect(() => {
+    if (!roomCode) return;
+
+    const statsInterval = setInterval(async () => {
+      if (peerConnectionsRef.current.size === 0) {
+        setNetworkStats({ ping: null, fps: null, quality: 'good' });
+        return;
+      }
+
+      let bestRtt = null;
+      let latestFps = null;
+
+      for (const pc of peerConnectionsRef.current.values()) {
+        if (pc.connectionState !== 'connected') continue;
+        try {
+          const stats = await pc.getStats();
+          stats.forEach((report) => {
+            if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
+              const rtt = typeof report.currentRoundTripTime === 'number'
+                ? report.currentRoundTripTime * 1000
+                : null;
+              if (rtt !== null && (bestRtt === null || rtt < bestRtt)) {
+                bestRtt = Math.round(rtt);
+              }
+            }
+            if ((report.type === 'inbound-rtp' || report.type === 'outbound-rtp') && report.kind === 'video') {
+              if (typeof report.framesPerSecond === 'number' && report.framesPerSecond > 0) {
+                latestFps = Math.round(report.framesPerSecond);
+              }
+            }
+          });
+        } catch {}
+      }
+
+      setNetworkStats((prev) => {
+        const ping = bestRtt !== null ? bestRtt : prev.ping;
+        const fps = latestFps !== null ? latestFps : prev.fps;
+        let quality = 'good';
+        if (ping !== null && ping > 150) quality = 'poor';
+        else if (ping !== null && ping > 80) quality = 'fair';
+        return { ping, fps, quality };
+      });
+    }, 2000);
+
+    return () => clearInterval(statsInterval);
+  }, [roomCode]);
+
   // Toggle Microphone Mute
   const toggleMicrophone = useCallback(() => {
     if (localMicRef.current) {
@@ -551,6 +715,7 @@ export function useWebRTC({ roomCode, displayName }) {
         audioTrack.enabled = !newMuted;
         isMicMutedRef.current = newMuted;
         setIsMicMuted(newMuted);
+        playMuteSound(newMuted);
 
         if (newMuted) {
           setIsSpeaking(false);
@@ -566,13 +731,15 @@ export function useWebRTC({ roomCode, displayName }) {
   }, [sendWs]);
 
   // Start Screen Sharing with specific constraints
-  const startScreenShare = useCallback(async (settings) => {
+  const startScreenShare = useCallback(async (settings = {}) => {
     try {
+      screenSettingsRef.current = settings;
+
       const constraints = {
         video: {
-          width: { ideal: settings.width },
-          height: { ideal: settings.height },
-          frameRate: { ideal: settings.frameRate, max: settings.frameRate }
+          width: { ideal: settings.width || 1920 },
+          height: { ideal: settings.height || 1080 },
+          frameRate: { ideal: settings.frameRate || 60, max: settings.frameRate || 60 }
         },
         audio: settings.audio ? {
           echoCancellation: false,
@@ -585,13 +752,72 @@ export function useWebRTC({ roomCode, displayName }) {
       setLocalScreenStream(stream);
       localScreenRef.current = stream;
 
-      // When browser's native "Stop Sharing" is pressed
-      stream.getVideoTracks()[0].onended = () => {
-        stopScreenShare();
-      };
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const hint = settings.contentHint || (settings.mode === 'detail' ? 'detail' : 'motion');
+        try {
+          videoTrack.contentHint = hint;
+        } catch {}
 
+        videoTrack.onended = () => {
+          stopScreenShare();
+        };
+      }
+
+      // Se houver áudio do sistema, configurar fidelidade de música estéreo e VU meter
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        try {
+          audioTrack.contentHint = 'music';
+        } catch {}
+
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) {
+            if (!audioContextRef.current) {
+              audioContextRef.current = new AudioCtx();
+            }
+            const ctx = audioContextRef.current;
+            const screenSource = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+            const screenAnalyser = ctx.createAnalyser();
+            screenAnalyser.fftSize = 256;
+            screenSource.connect(screenAnalyser);
+            screenAnalyserRef.current = screenAnalyser;
+          }
+        } catch (audioErr) {
+          console.warn('Screen audio analyser setup warning:', audioErr);
+        }
+      }
+
+      // Add tracks to all peer connections
       stream.getTracks().forEach((track) => {
         addTrackToAllPeers(track, stream);
+      });
+
+      // Apply sender optimization (FPS preservation & bitrate capping) to all active connections
+      peerConnectionsRef.current.forEach(async (pc) => {
+        try {
+          const senders = pc.getSenders();
+          if (videoTrack) {
+            const vSender = senders.find((s) => s.track && s.track.id === videoTrack.id);
+            if (vSender) {
+              await applySenderParameters(vSender, videoTrack, settings);
+            }
+          }
+          if (audioTrack) {
+            const aSender = senders.find((s) => s.track && s.track.id === audioTrack.id);
+            if (aSender) {
+              const p = aSender.getParameters();
+              if (p && p.encodings && p.encodings.length > 0) {
+                p.encodings[0].maxBitrate = 196000;
+                p.encodings[0].priority = 'high';
+                aSender.setParameters(p);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Error configuring sender params for peer:', e);
+        }
       });
 
       sendWs({
@@ -608,6 +834,10 @@ export function useWebRTC({ roomCode, displayName }) {
 
   // Stop Screen Sharing
   const stopScreenShare = useCallback(() => {
+    screenSettingsRef.current = null;
+    screenAnalyserRef.current = null;
+    setAudioLevels((prev) => ({ ...prev, screen: 0 }));
+
     if (localScreenRef.current) {
       localScreenRef.current.getTracks().forEach((track) => {
         track.stop();
@@ -712,6 +942,8 @@ export function useWebRTC({ roomCode, displayName }) {
     peerMicMutedMap,
     activeReactions,
     remoteStreams,
+    networkStats,
+    audioLevels,
     isScreenSharing: !!localScreenStream,
     isCameraOn: !!localCameraStream,
     toggleMicrophone,
