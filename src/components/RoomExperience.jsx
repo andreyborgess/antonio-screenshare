@@ -117,6 +117,9 @@ export default function RoomExperience({ code, onLeave }) {
           if (!storedName) {
             setShowNameModal(true);
           }
+          if (!isDiscord && new URLSearchParams(window.location.search).get('stream') === '1') {
+            setShowScreenModal(true);
+          }
         } else {
           setAuthStatus('error');
         }
@@ -656,15 +659,27 @@ export default function RoomExperience({ code, onLeave }) {
 
                     {/* Quick action buttons */}
                     <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={() => setShowScreenModal(true)}
-                        className="btn-nested-cta"
-                        style={{ padding: '0.5rem 1rem' }}
-                      >
-                        <span>Compartilhar Tela</span>
-                        <span className="btn-nested-circle">🖥️</span>
-                      </button>
+                      {isDiscord ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowDiscordModal(true)}
+                          className="btn-nested-cta"
+                          style={{ padding: '0.55rem 1.2rem', borderColor: 'rgba(88, 101, 242, 0.6)', background: 'rgba(88, 101, 242, 0.12)' }}
+                        >
+                          <span style={{ color: '#ffffff', fontWeight: 600 }}>🚀 Transmitir pelo PC (1 Clique)</span>
+                          <span className="btn-nested-circle" style={{ backgroundColor: '#5865F2' }}>🖥️</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowScreenModal(true)}
+                          className="btn-nested-cta"
+                          style={{ padding: '0.5rem 1rem' }}
+                        >
+                          <span>Compartilhar Tela</span>
+                          <span className="btn-nested-circle">🖥️</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"

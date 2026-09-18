@@ -1,8 +1,32 @@
 import React, { useState } from 'react';
+import { getDiscordSdk } from '../utils/discord';
 
 export default function DiscordStreamModal({ roomCode, onClose }) {
   const [copied, setCopied] = useState(false);
-  const streamUrl = `https://screen-flax.vercel.app/room/${roomCode}`;
+  const [opening, setOpening] = useState(false);
+  const streamUrl = `https://screen-flax.vercel.app/room/${roomCode}?stream=1`;
+
+  async function handleOpenBrowser() {
+    setOpening(true);
+    const sdk = getDiscordSdk();
+    if (sdk && sdk.commands && sdk.commands.openExternalLink) {
+      try {
+        await sdk.commands.openExternalLink({ url: streamUrl });
+        setOpening(false);
+        onClose();
+        return;
+      } catch (err) {
+        console.warn('[DiscordSDK] openExternalLink error, trying fallback:', err);
+      }
+    }
+
+    try {
+      window.open(streamUrl, '_blank');
+    } catch {
+      handleCopy();
+    }
+    setOpening(false);
+  }
 
   async function handleCopy() {
     try {
@@ -34,7 +58,7 @@ export default function DiscordStreamModal({ roomCode, onClose }) {
         style={{
           width: '100%',
           maxWidth: '32rem',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px rgba(88, 101, 242, 0.15)'
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px rgba(88, 101, 242, 0.2)'
         }}
       >
         <div
@@ -67,10 +91,10 @@ export default function DiscordStreamModal({ roomCode, onClose }) {
             </div>
             <div>
               <h3 className="font-display" style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--paper)' }}>
-                Transmitir para esta chamada
+                Transmitir Tela para a Chamada
               </h3>
               <p style={{ fontSize: '0.75rem', color: 'var(--fog)' }}>
-                Drible de bloqueio nativo do Discord
+                1080p 60 FPS com áudio do Windows
               </p>
             </div>
           </div>
@@ -88,57 +112,56 @@ export default function DiscordStreamModal({ roomCode, onClose }) {
             }}
           >
             <p style={{ margin: 0 }}>
-              Por segurança, o Discord <strong>bloqueia a captura de tela direta de dentro de Atividades</strong>.
+              O Discord bloqueia a captura de tela direta de dentro de Atividades por segurança.
             </p>
             <p style={{ margin: '0.65rem 0 0 0', color: 'var(--fog)' }}>
-              Para transmitir sua tela em <strong style={{ color: 'var(--signal)' }}>1080p 60 FPS com áudio do Windows</strong>, basta abrir o link abaixo no seu <strong>Chrome ou Edge</strong> no PC.
+              Clique no botão abaixo para <strong>abrir o Chrome com 1 clique</strong>. Ao confirmar sua tela no Chrome, a imagem aparece ao vivo aqui no Discord para todo mundo!
             </p>
           </div>
 
-          {/* URL Box */}
-          <div
+          {/* Primary Action: 1-Click Open in Browser via Discord SDK */}
+          <button
+            type="button"
+            onClick={handleOpenBrowser}
+            className="btn btn-primary"
             style={{
+              width: '100%',
+              padding: '0.85rem 1.25rem',
+              backgroundColor: '#5865F2',
+              borderColor: '#5865F2',
+              color: '#ffffff',
+              fontSize: '0.9375rem',
+              fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
+              justifyContent: 'center',
               gap: '0.5rem',
-              padding: '0.75rem 1rem',
-              borderRadius: '0.5rem',
-              backgroundColor: '#0c0e14',
-              border: '1px solid var(--hairline)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.8125rem',
-              color: 'var(--paper)'
+              boxShadow: '0 4px 14px rgba(88, 101, 242, 0.35)'
             }}
           >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {streamUrl}
-            </span>
-            <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(88, 101, 242, 0.2)', color: '#5865F2' }}>
-              {roomCode}
-            </span>
-          </div>
+            <span>{opening ? 'Abrindo navegador...' : '🚀 Abrir no Navegador (1 Clique)'}</span>
+          </button>
 
-          {/* Actions */}
-          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+          {/* Secondary Options */}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             <button
               type="button"
               onClick={handleCopy}
-              className="btn btn-primary"
+              className="btn btn-ghost"
               style={{
                 flex: 1,
-                backgroundColor: copied ? 'var(--signal)' : '#5865F2',
-                borderColor: copied ? 'var(--signal)' : '#5865F2',
-                color: copied ? '#07080b' : '#ffffff'
+                fontSize: '0.8125rem',
+                borderColor: copied ? 'var(--signal)' : 'var(--hairline)',
+                color: copied ? 'var(--signal)' : 'var(--paper)'
               }}
             >
-              {copied ? '✓ Link copiado! Abra no Chrome' : 'Copiar Link de Transmissão'}
+              {copied ? '✓ Link copiado!' : 'Copiar link'}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="btn btn-ghost"
-              style={{ padding: '0 1.25rem' }}
+              style={{ padding: '0 1.25rem', fontSize: '0.8125rem' }}
             >
               Fechar
             </button>
