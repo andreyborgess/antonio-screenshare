@@ -1,5 +1,5 @@
 // src/utils/discord.js
-import { DiscordSDK } from '@discord/embedded-app-sdk';
+import { DiscordSDK, patchUrlMappings } from '@discord/embedded-app-sdk';
 
 let discordSdkInstance = null;
 let isInitialized = false;
@@ -17,13 +17,25 @@ export function isDiscordActivity() {
   );
 }
 
+// Automatically apply Discord URL mapping patches when running inside Discord
+if (typeof window !== 'undefined' && isDiscordActivity()) {
+  try {
+    patchUrlMappings([
+      { prefix: '/api', target: 'antonio-screenshare.onrender.com' },
+      { prefix: '/ws', target: 'antonio-screenshare.onrender.com' }
+    ]);
+  } catch (err) {
+    console.warn('[DiscordSDK] patchUrlMappings warning:', err);
+  }
+}
+
 /**
  * Returns the appropriate API base URL for REST calls.
- * Inside Discord, URL Mappings (/api) route relative to current host via Discord's secure proxy.
+ * Inside Discord, Discord requires the `/.proxy` prefix to route requests through its proxy mappings.
  */
 export function getApiBase() {
   if (isDiscordActivity()) {
-    return '';
+    return '/.proxy';
   }
   const backend = import.meta.env.VITE_BACKEND_URL;
   return backend ? backend.replace(/\/$/, '') : '';
@@ -31,12 +43,12 @@ export function getApiBase() {
 
 /**
  * Returns the WebSocket URL.
- * Inside Discord, URL Mappings (/ws) route through Discord's secure proxy.
+ * Inside Discord, requests must be routed via `/.proxy/ws`.
  */
 export function getWsUrl() {
   if (isDiscordActivity()) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws`;
+    return `${protocol}//${window.location.host}/.proxy/ws`;
   }
 
   const backend = import.meta.env.VITE_BACKEND_URL;

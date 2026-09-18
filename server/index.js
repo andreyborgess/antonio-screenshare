@@ -13,7 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // API: Create a room (or get/create with custom code)
-app.post('/api/rooms', (req, res) => {
+app.post(['/api/rooms', '/rooms'], (req, res) => {
   const { password, customCode } = req.body || {};
   try {
     const room = createRoom(password, customCode);
@@ -26,7 +26,7 @@ app.post('/api/rooms', (req, res) => {
 });
 
 // API: Check room & verify password for joining
-app.post('/api/rooms/:code/join', (req, res) => {
+app.post(['/api/rooms/:code/join', '/rooms/:code/join'], (req, res) => {
   const code = (req.params.code || '').toUpperCase();
   const { password, autoCreate } = req.body || {};
 
@@ -58,7 +58,7 @@ app.post('/api/rooms/:code/join', (req, res) => {
 });
 
 // API: Get room basic status
-app.get('/api/rooms/:code', (req, res) => {
+app.get(['/api/rooms/:code', '/rooms/:code'], (req, res) => {
   const code = (req.params.code || '').toUpperCase();
   const room = getRoom(code);
   if (!room) {
@@ -83,7 +83,7 @@ const distPath = path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/rooms') || req.path.startsWith('/ws')) {
       return next();
     }
     res.sendFile(path.join(distPath, 'index.html'));
@@ -91,7 +91,8 @@ if (fs.existsSync(distPath)) {
 }
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Accept WebSocket connection on any path (/ws, /.proxy/ws, /, etc.)
+const wss = new WebSocketServer({ server });
 
 setupSignaling(wss);
 
