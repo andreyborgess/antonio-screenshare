@@ -647,44 +647,24 @@ export default function RoomExperience({ code, onLeave }) {
 
                     <div>
                       <h2 className="font-display" style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--paper)', letterSpacing: '-0.02em' }}>
-                        {isDiscord ? 'Aguardando transmissão' : 'Pronto para transmitir'}
+                        Pronto para transmitir
                       </h2>
                       <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--fog)', lineHeight: 1.5 }}>
-                        {isDiscord ? (
-                          <>
-                            Conectado à chamada do Discord! Abra o link no <strong style={{ color: 'var(--paper)' }}>Chrome ou Edge</strong> no PC para transmitir em 1080p 60fps com som do Windows sem bloqueios.
-                          </>
-                        ) : (
-                          <>
-                            Olá, <strong style={{ color: 'var(--paper)' }}>{displayName}</strong>! Compartilhe sua tela em até 1080p 60fps ou abra sua câmera com os botões abaixo.
-                          </>
-                        )}
+                        Olá, <strong style={{ color: 'var(--paper)' }}>{displayName}</strong>! Compartilhe sua tela em até 1080p 60fps ou abra sua câmera com os botões abaixo.
                       </p>
                     </div>
 
                     {/* Quick action buttons */}
                     <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-                      {isDiscord ? (
-                        <button
-                          type="button"
-                          onClick={() => setShowDiscordModal(true)}
-                          className="btn-nested-cta"
-                          style={{ padding: '0.5rem 1rem', borderColor: 'rgba(88, 101, 242, 0.5)' }}
-                        >
-                          <span>Como Transmitir pelo PC</span>
-                          <span className="btn-nested-circle" style={{ backgroundColor: '#5865F2' }}>🚀</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setShowScreenModal(true)}
-                          className="btn-nested-cta"
-                          style={{ padding: '0.5rem 1rem' }}
-                        >
-                          <span>Compartilhar Tela</span>
-                          <span className="btn-nested-circle">🖥️</span>
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowScreenModal(true)}
+                        className="btn-nested-cta"
+                        style={{ padding: '0.5rem 1rem' }}
+                      >
+                        <span>Compartilhar Tela</span>
+                        <span className="btn-nested-circle">🖥️</span>
+                      </button>
 
                       <button
                         type="button"
@@ -731,8 +711,6 @@ export default function RoomExperience({ code, onLeave }) {
             onToggleScreenShare={() => {
               if (isScreenSharing) {
                 stopScreenShare();
-              } else if (isDiscord) {
-                setShowDiscordModal(true);
               } else {
                 setShowScreenModal(true);
               }
@@ -759,7 +737,12 @@ export default function RoomExperience({ code, onLeave }) {
         <ScreenSettingsModal
           onConfirm={(settings) => {
             setShowScreenModal(false);
-            startScreenShare(settings).catch(() => {});
+            startScreenShare(settings).catch((err) => {
+              console.warn('Erro ao compartilhar tela:', err);
+              if (isDiscord) {
+                setShowDiscordModal(true);
+              }
+            });
           }}
           onCancel={() => setShowScreenModal(false)}
         />
