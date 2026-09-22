@@ -37,7 +37,7 @@ export function getApiBase() {
   if (isDiscordActivity()) {
     return '/.proxy';
   }
-  const backend = import.meta.env.VITE_BACKEND_URL;
+  const backend = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://antonio-screenshare.onrender.com' : '');
   return backend ? backend.replace(/\/$/, '') : '';
 }
 
@@ -51,7 +51,7 @@ export function getWsUrl() {
     return `${protocol}//${window.location.host}/.proxy/ws`;
   }
 
-  const backend = import.meta.env.VITE_BACKEND_URL;
+  const backend = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? 'https://antonio-screenshare.onrender.com' : '');
   if (backend) {
     const wsProto = backend.startsWith('https') ? 'wss:' : 'ws:';
     const cleanHost = backend.replace(/^https?:\/\//, '').replace(/\/$/, '');
