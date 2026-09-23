@@ -10,6 +10,7 @@ import ControlBar from './ControlBar';
 import VideoTile from './VideoTile';
 import ReactionBar from './ReactionBar';
 import ReactionOverlay from './ReactionOverlay';
+import GeekStatsModal from './GeekStatsModal';
 
 function RemoteAudio({ stream, volume = 1 }) {
   const audioRef = useRef(null);
@@ -42,9 +43,21 @@ export default function RoomExperience({ code, onLeave }) {
   const [showNameModal, setShowNameModal] = useState(false);
   const [showScreenModal, setShowScreenModal] = useState(false);
   const [showDiscordModal, setShowDiscordModal] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [pinnedStreamId, setPinnedStreamId] = useState(null);
   const isDiscord = isDiscordActivity();
+
+  // Keyboard shortcut: 'S' toggles Geek Stats HUD
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key.toLowerCase() === 's' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+        setShowStatsModal((prev) => !prev);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Mixer de volume individual por participante salvo localmente
   const [peerVolumes, setPeerVolumes] = useState(() => {
@@ -482,24 +495,31 @@ export default function RoomExperience({ code, onLeave }) {
           </span>
 
           {connectionStatus === 'connected' && networkStats?.ping !== null && (
-            <span
-              title={`Latência estimada de ida e volta: ${networkStats.ping}ms`}
+            <button
+              type="button"
+              onClick={() => setShowStatsModal(true)}
+              title={`Latência: ${networkStats.ping}ms. Clique para abrir diagnóstico de rede (HUD / Tecla S)`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '0.35rem',
                 fontSize: '0.7rem',
                 fontFamily: 'var(--font-mono)',
-                padding: '0.15rem 0.5rem',
-                borderRadius: '0.35rem',
-                backgroundColor: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid var(--hairline)',
-                color: networkStats.quality === 'good' ? 'var(--signal)' : networkStats.quality === 'fair' ? '#fbbf24' : 'var(--danger)'
+                padding: '0.2rem 0.55rem',
+                borderRadius: '0.375rem',
+                backgroundColor: showStatsModal ? 'rgba(167, 139, 250, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                border: showStatsModal ? '1px solid var(--orchid)' : '1px solid var(--hairline)',
+                color: networkStats.quality === 'good' ? 'var(--signal)' : networkStats.quality === 'fair' ? '#fbbf24' : 'var(--danger)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
               }}
             >
               <span>{networkStats.ping}ms</span>
               {networkStats.fps ? <span style={{ color: 'var(--fog)' }}>• {networkStats.fps} fps</span> : null}
-            </span>
+              {networkStats.connectionType === 'relay' && (
+                <span title="Conexão protegida via túnel TURN" style={{ color: '#38bdf8', fontSize: '0.65rem' }}>🛡️ TURN</span>
+              )}
+            </button>
           )}
           {isDiscord && (
             <span
@@ -782,6 +802,13 @@ export default function RoomExperience({ code, onLeave }) {
           onClose={() => setShowDiscordModal(false)}
         />
       )}
+
+      {/* Geek Stats / Network Diagnostics HUD Modal */}
+      <GeekStatsModal
+        stats={networkStats}
+        isOpen={showStatsModal}
+        onClose={() => setShowStatsModal(false)}
+      />
     </div>
   );
 }

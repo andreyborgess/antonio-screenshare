@@ -1,10 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getApiBase } from '../utils/discord';
+import { useBackendStatus } from '../utils/wakeUp';
 
 export default function CreateRoomForm({ onRoomCreated }) {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isWaking, setIsWaking] = useState(false);
   const [error, setError] = useState(null);
+  const backendStatus = useBackendStatus();
+
+  useEffect(() => {
+    let timer;
+    if (isLoading) {
+      timer = setTimeout(() => {
+        setIsWaking(true);
+      }, 2000);
+    } else {
+      setIsWaking(false);
+    }
+    return () => clearTimeout(timer);
+  }, [isLoading]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -63,7 +78,13 @@ export default function CreateRoomForm({ onRoomCreated }) {
             disabled={isLoading}
             className="btn-nested-cta"
           >
-            <span>{isLoading ? 'Criando sala...' : 'Criar sala agora'}</span>
+            <span>
+              {isLoading
+                ? isWaking || backendStatus === 'waking'
+                  ? 'Acordando servidor...'
+                  : 'Criando sala...'
+                : 'Criar sala agora'}
+            </span>
             <span className="btn-nested-circle">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -71,6 +92,13 @@ export default function CreateRoomForm({ onRoomCreated }) {
               </svg>
             </span>
           </button>
+
+          {(isWaking || (isLoading && backendStatus === 'waking')) && (
+            <p style={{ marginTop: '0.625rem', fontSize: '0.75rem', color: 'var(--orchid)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span className="live-dot" style={{ width: '0.45rem', height: '0.45rem' }} />
+              Acordando instância em nuvem (Render)... Aguarde alguns segundos.
+            </p>
+          )}
 
           {error && <p className="error-text" role="alert" style={{ marginTop: '0.5rem' }}>{error}</p>}
         </div>

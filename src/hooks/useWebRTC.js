@@ -18,9 +18,29 @@ export function getInitials(name = '') {
 
 const ICE_SERVERS = {
   iceServers: [
+    // Google Public STUNs
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ]
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Metered OpenRelay Public STUN & TURN (UDP & TCP fallback for 4G/5G and restricted firewalls)
+    { urls: 'stun:openrelay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelay',
+      credential: 'openrelay'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelay',
+      credential: 'openrelay'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelay',
+      credential: 'openrelay'
+    }
+  ],
+  iceCandidatePoolSize: 2
 };
 
 // Configura parâmetros de codificação e degradação no RTCRtpSender para evitar queda drástica de FPS
@@ -108,7 +128,23 @@ export function useWebRTC({ roomCode, displayName }) {
   const [localScreenStream, setLocalScreenStream] = useState(null);
   const [localCameraStream, setLocalCameraStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({}); // { [peerId]: { screenStream, cameraStream, audioStream, name } }
-  const [networkStats, setNetworkStats] = useState({ ping: null, fps: null, quality: 'good' });
+  const [networkStats, setNetworkStats] = useState({
+    ping: null,
+    fps: null,
+    bitrateKbps: null,
+    packetLossPct: 0,
+    resolution: null,
+    codec: null,
+    connectionType: 'direct', // 'direct' (P2P) | 'relay' (TURN)
+    jitter: null,
+    quality: 'good'
+  });
+  const prevStatsRef = useRef({
+    timestamp: Date.now(),
+    bytesTotal: 0,
+    packetsLost: 0,
+    packetsTotal: 0
+  });
   const [audioLevels, setAudioLevels] = useState({ mic: 0, screen: 0 });
 
   // Microphone & Speaking States
@@ -655,17 +691,47 @@ export function useWebRTC({ roomCode, displayName }) {
 
     const statsInterval = setInterval(async () => {
       if (peerConnectionsRef.current.size === 0) {
-        setNetworkStats({ ping: null, fps: null, quality: 'good' });
+        setNetworkStats({
+          ping: null,
+          fps: null,
+          bitrateKbps: null,
+          packetLossPct: 0,
+          resolution: null,
+          codec: null,
+          connectionType: 'direct',
+          jitter: null,
+          quality: 'good'
+        });
         return;
       }
 
       let bestRtt = null;
       let latestFps = null;
+      let currentBytes = 0;
+      let currentPacketsLost = 0;
+      let currentPacketsTotal = 0;
+      let currentResolution = null;
+      let detectedCodec = null;
+      let connectionType = 'direct';
+      let latestJitter = null;
+
+      const now = Date.now();
 
       for (const pc of peerConnectionsRef.current.values()) {
         if (pc.connectionState !== 'connected') continue;
         try {
           const stats = await pc.getStats();
+          const candidateMap = new Map();
+          const codecMap = new Map();
+
+          stats.forEach((report) => {
+            if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+              candidateMap.set(report.id, report);
+            } else if (report.type === 'codec') {
+              codecMap.set(report.id, report);
+            }
+          });
+
           stats.forEach((report) => {
             if (report.type === 'candidate-pair' && (report.state === 'succeeded' || report.nominated)) {
               const rtt = typeof report.currentRoundTripTime === 'number'
@@ -674,10 +740,41 @@ export function useWebRTC({ roomCode, displayName }) {
               if (rtt !== null && (bestRtt === null || rtt < bestRtt)) {
                 bestRtt = Math.round(rtt);
               }
+
+              const localCandidate = candidateMap.get(report.localCandidateId);
+              const remoteCandidate = candidateMap.get(report.remoteCandidateId);
+              if (
+                (localCandidate && localCandidate.candidateType === 'relay') ||
+                (remoteCandidate && remoteCandidate.candidateType === 'relay')
+              ) {
+                connectionType = 'relay';
+              }
             }
-            if ((report.type === 'inbound-rtp' || report.type === 'outbound-rtp') && report.kind === 'video') {
-              if (typeof report.framesPerSecond === 'number' && report.framesPerSecond > 0) {
-                latestFps = Math.round(report.framesPerSecond);
+
+            if (report.type === 'inbound-rtp' || report.type === 'outbound-rtp') {
+              if (typeof report.bytesReceived === 'number') currentBytes += report.bytesReceived;
+              if (typeof report.bytesSent === 'number') currentBytes += report.bytesSent;
+              if (typeof report.packetsLost === 'number') currentPacketsLost += report.packetsLost;
+              if (typeof report.packetsReceived === 'number') currentPacketsTotal += report.packetsReceived;
+              if (typeof report.packetsSent === 'number') currentPacketsTotal += report.packetsSent;
+
+              if (report.kind === 'video') {
+                if (typeof report.framesPerSecond === 'number' && report.framesPerSecond > 0) {
+                  latestFps = Math.round(report.framesPerSecond);
+                }
+                if (report.frameWidth && report.frameHeight) {
+                  currentResolution = `${report.frameWidth}×${report.frameHeight}`;
+                }
+                if (report.codecId && codecMap.has(report.codecId)) {
+                  const c = codecMap.get(report.codecId);
+                  if (c.mimeType) {
+                    detectedCodec = c.mimeType.replace(/^video\//i, '').toUpperCase();
+                  }
+                }
+              }
+
+              if (typeof report.jitter === 'number') {
+                latestJitter = Math.round(report.jitter * 1000);
               }
             }
           });
@@ -685,12 +782,46 @@ export function useWebRTC({ roomCode, displayName }) {
       }
 
       setNetworkStats((prev) => {
+        const prevData = prevStatsRef.current;
+        const deltaTime = (now - prevData.timestamp) / 1000;
+        let bitrateKbps = prev.bitrateKbps;
+
+        if (deltaTime > 0 && currentBytes >= prevData.bytesTotal && prevData.bytesTotal > 0) {
+          const deltaBits = (currentBytes - prevData.bytesTotal) * 8;
+          bitrateKbps = Math.round(deltaBits / (deltaTime * 1000));
+        }
+
+        let packetLossPct = prev.packetLossPct;
+        const deltaPackets = currentPacketsTotal - prevData.packetsTotal;
+        const deltaLost = currentPacketsLost - prevData.packetsLost;
+        if (deltaPackets > 0 && deltaLost >= 0) {
+          packetLossPct = Math.min(100, Math.round((deltaLost / (deltaPackets + deltaLost)) * 1000) / 10);
+        }
+
+        prevStatsRef.current = {
+          timestamp: now,
+          bytesTotal: currentBytes,
+          packetsLost: currentPacketsLost,
+          packetsTotal: currentPacketsTotal
+        };
+
         const ping = bestRtt !== null ? bestRtt : prev.ping;
         const fps = latestFps !== null ? latestFps : prev.fps;
         let quality = 'good';
         if (ping !== null && ping > 150) quality = 'poor';
         else if (ping !== null && ping > 80) quality = 'fair';
-        return { ping, fps, quality };
+
+        return {
+          ping,
+          fps,
+          bitrateKbps,
+          packetLossPct,
+          resolution: currentResolution || prev.resolution,
+          codec: detectedCodec || prev.codec,
+          connectionType,
+          jitter: latestJitter !== null ? latestJitter : prev.jitter,
+          quality
+        };
       });
     }, 2000);
 

@@ -12,6 +12,11 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// API: Health / Ping (Used for preventing/detecting Render cold starts)
+app.get(['/api/health', '/health'], (req, res) => {
+  return res.status(200).json({ ok: true, status: 'awake', timestamp: Date.now() });
+});
+
 // API: Create a room (or get/create with custom code)
 app.post(['/api/rooms', '/rooms'], (req, res) => {
   const { password, customCode } = req.body || {};

@@ -20,8 +20,13 @@ function getRoomCodeFromPath() {
 }
 
 import { isDiscordActivity, initDiscordSdk, getDiscordRoomCode } from './utils/discord';
+import { pingBackend } from './utils/wakeUp';
 
 export default function App() {
+  // Dispara wake-up preventivo silencioso para o Render assim que a página abre
+  useEffect(() => {
+    pingBackend();
+  }, []);
   const isDiscord = isDiscordActivity();
   const [currentRoomCode, setCurrentRoomCode] = useState(() => {
     // If inside Discord, check query params immediately
