@@ -196,31 +196,44 @@ export default function App() {
         }}
       >
         {/* Eyebrow Pill Tag */}
-        <span className="eyebrow-tag">
-          <span className="live-dot" />
-          sem conta · tela e voz em tempo real · sem rastro
+        <span className="eyebrow-tag" style={{ borderColor: 'rgba(245, 158, 11, 0.3)', color: '#FCD34D' }}>
+          <span className="live-dot" style={{ backgroundColor: '#F59E0B', boxShadow: '0 0 10px #F59E0B' }} />
+          👑 Servidor Oficial · Suprema Brasil · P2P 60 FPS
         </span>
 
         {/* Hero Title */}
-        <h1
-          className="font-display"
-          style={{
-            marginTop: '2rem',
-            fontSize: 'clamp(2.75rem, 6.5vw, 4.75rem)',
-            fontWeight: 700,
-            letterSpacing: '-0.035em',
-            color: 'var(--paper)',
-            lineHeight: 1.08
-          }}
-        >
-          Antonio <span className="text-orchid">Screenshare</span>
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', marginTop: '1.75rem' }}>
+          <img
+            src="/logo.png"
+            alt="Suprema Brasil"
+            style={{
+              width: '3.75rem',
+              height: '3.75rem',
+              borderRadius: '50%',
+              padding: '2px',
+              background: 'linear-gradient(135deg, #FFE082 0%, #F59E0B 50%, #D97706 100%)',
+              boxShadow: '0 0 24px rgba(245, 158, 11, 0.4)'
+            }}
+          />
+          <h1
+            className="font-display"
+            style={{
+              fontSize: 'clamp(2.5rem, 6vw, 4.25rem)',
+              fontWeight: 800,
+              letterSpacing: '-0.035em',
+              color: 'var(--paper)',
+              lineHeight: 1.08
+            }}
+          >
+            Suprema <span className="text-gold-gradient">Screenshare</span>
+          </h1>
+        </div>
 
         {/* Hero Subtitle */}
         <p
           className="text-pretty"
           style={{
-            marginTop: '1.5rem',
+            marginTop: '1.25rem',
             maxWidth: '38rem',
             fontSize: '1.125rem',
             color: 'var(--fog)',
@@ -228,8 +241,8 @@ export default function App() {
             fontWeight: 400
           }}
         >
-          Crie uma sala privada, envie o código para quem precisa assistir e compartilhe sua tela em alta fidelidade.
-          Zero login, zero downloads, sem rastros.
+          Transmissão de tela ultrarrápida a 60 FPS com áudio estéreo imersivo em salas privadas.
+          Exclusivo para membros autorizados da Suprema Brasil.
         </p>
 
         {/* Double-Bezel Form Grid */}
@@ -273,8 +286,8 @@ export default function App() {
               Criptografia DTLS-SRTP
             </span>
           </div>
-          <p style={{ fontSize: '0.8125rem', color: 'var(--fog)', opacity: 0.75 }}>
-            Antonio Screenshare · Desenvolvido com WebRTC nativo e áudio de alta fidelidade
+          <p style={{ fontSize: '0.8125rem', color: 'var(--fog)', opacity: 0.85 }}>
+            Suprema Screenshare · Exclusivo Suprema Brasil · Alta fidelidade P2P 60 FPS
           </p>
         </footer>
       </div>

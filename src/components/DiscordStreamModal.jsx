@@ -4,7 +4,8 @@ import { getDiscordSdk } from '../utils/discord';
 export default function DiscordStreamModal({ roomCode, onClose }) {
   const [copied, setCopied] = useState(false);
   const [opening, setOpening] = useState(false);
-  const streamUrl = `https://screen-flax.vercel.app/room/${roomCode}?stream=1`;
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://screen-ten-tau.vercel.app';
+  const streamUrl = `${baseUrl}/room/${roomCode}?stream=1`;
 
   async function handleOpenBrowser() {
     setOpening(true);

@@ -284,7 +284,7 @@ export default function RoomExperience({ code, onLeave }) {
                   Acessando sala...
                 </h1>
                 <p style={{ fontSize: '0.875rem', color: 'var(--fog)' }}>
-                  Estabelecendo conexão segura WebRTC com Antonio Screenshare.
+                  Estabelecendo conexão segura WebRTC com Suprema Screenshare.
                 </p>
               </div>
             )}
@@ -390,26 +390,20 @@ export default function RoomExperience({ code, onLeave }) {
       >
         {/* Brand identity */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-          <div
+          <img
+            src="/logo.png"
+            alt="Suprema Brasil"
             style={{
-              width: '1.75rem',
-              height: '1.75rem',
-              borderRadius: '0.5rem',
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.02))',
-              border: '1px solid var(--hairline)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.75rem',
-              fontWeight: 800,
-              color: 'var(--paper)',
-              letterSpacing: '-0.03em'
+              width: '1.85rem',
+              height: '1.85rem',
+              borderRadius: '50%',
+              objectFit: 'cover',
+              border: '1.5px solid #F59E0B',
+              boxShadow: '0 0 10px rgba(245, 158, 11, 0.3)'
             }}
-          >
-            AS
-          </div>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--paper)', letterSpacing: '-0.01em' }}>
-            Antonio <span style={{ color: 'var(--fog)', fontWeight: 400 }}>Screenshare</span>
+          />
+          <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--paper)', letterSpacing: '-0.01em' }}>
+            Suprema <span className="text-gold-gradient">Screenshare</span>
           </span>
         </div>
 

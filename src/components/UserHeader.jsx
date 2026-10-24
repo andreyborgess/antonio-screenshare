@@ -26,10 +26,10 @@ export default function UserHeader() {
           gap: '0.75rem',
           padding: '0.4rem 0.85rem 0.4rem 0.5rem',
           borderRadius: '999px',
-          backgroundColor: 'rgba(16, 18, 26, 0.75)',
+          backgroundColor: 'rgba(16, 18, 26, 0.85)',
           backdropFilter: 'blur(12px)',
-          border: '1px solid rgba(88, 101, 242, 0.25)',
-          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)'
+          border: '1px solid rgba(245, 158, 11, 0.35)',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(245, 158, 11, 0.15)'
         }}
       >
         <img
@@ -40,7 +40,7 @@ export default function UserHeader() {
             height: '2rem',
             borderRadius: '50%',
             objectFit: 'cover',
-            border: '1.5px solid #5865F2'
+            border: '1.5px solid #F59E0B'
           }}
         />
 
@@ -48,8 +48,8 @@ export default function UserHeader() {
           <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--paper)' }}>
             {user.globalName || user.username}
           </span>
-          <span style={{ fontSize: '0.675rem', color: '#4fe7c4', fontWeight: 500 }}>
-            ● Membro Autorizado
+          <span style={{ fontSize: '0.675rem', color: '#FCD34D', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <span>👑</span> Membro Suprema Brasil
           </span>
         </div>
 
