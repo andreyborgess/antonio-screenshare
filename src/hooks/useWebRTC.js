@@ -436,12 +436,20 @@ export function useWebRTC({ roomCode, displayName }) {
 
     ws.onopen = () => {
       setConnectionStatus('connected');
+      const token = localStorage.getItem('antonio_token') || '';
+      let savedUser = {};
+      try {
+        savedUser = JSON.parse(localStorage.getItem('antonio_user') || '{}');
+      } catch {}
+
       ws.send(
         JSON.stringify({
           type: 'join-room',
           roomCode,
-          name: displayNameRef.current || 'Anônimo',
-          identity: `user_${Math.random().toString(36).slice(2, 8)}`
+          name: displayNameRef.current || savedUser.globalName || savedUser.username || 'Membro',
+          avatar: savedUser.avatarUrl || '',
+          token,
+          identity: savedUser.id || `user_${Math.random().toString(36).slice(2, 8)}`
         })
       );
     };
@@ -652,6 +660,14 @@ export function useWebRTC({ roomCode, displayName }) {
                 isLocal: msg.senderId === localSocketIdRef.current
               }
             ]);
+            break;
+          }
+
+          case 'error': {
+            console.error('[WebRTC Server Error]', msg.message);
+            if (msg.code === 'UNAUTHORIZED') {
+              setConnectionStatus('unauthorized');
+            }
             break;
           }
         }

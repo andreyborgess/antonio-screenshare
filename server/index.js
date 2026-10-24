@@ -1,16 +1,80 @@
-// server/index.js
+import 'dotenv/config';
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createRoom, getRoom, verifyRoomPassword } from './rooms.js';
 import { setupSignaling } from './signaling.js';
+import {
+  exchangeDiscordCode,
+  fetchDiscordUser,
+  checkGuildMembership,
+  createSessionToken,
+  verifySessionToken
+} from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+
+// Auth: Exchange Discord OAuth2 Code & verify Guild membership
+app.post(['/api/auth/discord', '/auth/discord'], async (req, res) => {
+  const { code, redirectUri } = req.body || {};
+  if (!code || !redirectUri) {
+    return res.status(400).json({ error: 'Código de autorização e redirectUri são obrigatórios.' });
+  }
+
+  try {
+    const tokenData = await exchangeDiscordCode(code, redirectUri);
+    const user = await fetchDiscordUser(tokenData.access_token);
+    const membership = await checkGuildMembership(tokenData.access_token);
+
+    if (!membership.isMember) {
+      console.warn(`[AUTH BLOCKED] User ${user.username} (${user.id}) is not in guild ${membership.targetGuildId}`);
+      return res.status(403).json({
+        error: 'not_in_guild',
+        message: 'Você precisa ser membro do servidor oficial do Discord para acessar.',
+        user: { username: user.username, globalName: user.globalName, avatarUrl: user.avatarUrl },
+        guildId: membership.targetGuildId
+      });
+    }
+
+    const sessionToken = createSessionToken(user);
+    console.log(`[AUTH SUCCESS] User ${user.username} (${user.id}) authenticated successfully.`);
+
+    return res.status(200).json({
+      ok: true,
+      token: sessionToken,
+      user
+    });
+  } catch (err) {
+    console.error('[AUTH ERROR]', err);
+    return res.status(500).json({ error: err.message || 'Erro na autenticação com o Discord.' });
+  }
+});
+
+// Auth: Verify existing session token
+app.get(['/api/auth/me', '/auth/me'], (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '');
+  const decoded = verifySessionToken(token);
+
+  if (!decoded) {
+    return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    user: {
+      id: decoded.userId,
+      username: decoded.username,
+      globalName: decoded.globalName,
+      avatarUrl: decoded.avatarUrl
+    }
+  });
+});
 
 // API: Health / Ping (Used for preventing/detecting Render cold starts)
 app.get(['/api/health', '/health'], (req, res) => {

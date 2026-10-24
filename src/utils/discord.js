@@ -80,7 +80,7 @@ export async function initDiscordSdk() {
   if (!isDiscordActivity()) return null;
   if (discordSdkInstance && isInitialized) return discordSdkInstance;
 
-  const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID || '1474274159105409257';
+  const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID || '1494510437763514408';
 
   try {
     discordSdkInstance = new DiscordSDK(clientId);

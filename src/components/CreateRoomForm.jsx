@@ -28,9 +28,13 @@ export default function CreateRoomForm({ onRoomCreated }) {
 
     try {
       const apiBase = getApiBase();
+      const token = localStorage.getItem('antonio_token');
       const res = await fetch(`${apiBase}/api/rooms`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ password: password.trim() || undefined })
       });
 

@@ -1,5 +1,6 @@
 // server/signaling.js
 import { getRoom, addParticipant, removeParticipant } from './rooms.js';
+import { verifySessionToken } from './auth.js';
 
 export function setupSignaling(wss) {
   // Store socket mapping: ws -> socketId
@@ -23,15 +24,36 @@ export function setupSignaling(wss) {
 
         switch (msg.type) {
           case 'join-room': {
-            const { roomCode, name, identity } = msg;
+            const { roomCode, name, identity, token, avatar } = msg;
+
+            // Verify Discord Guild membership session token
+            const decoded = verifySessionToken(token);
+            if (!decoded) {
+              console.warn(`[WS BLOCKED] Unauthorized connection attempt to room ${roomCode} without valid Discord session.`);
+              send({
+                type: 'error',
+                code: 'UNAUTHORIZED',
+                message: 'Acesso não autorizado. É necessário fazer login com o Discord e estar no servidor oficial.'
+              });
+              try { ws.close(4001, 'Unauthorized'); } catch {}
+              return;
+            }
+
             const room = getRoom(roomCode);
             if (!room) {
               send({ type: 'error', message: 'Sala não encontrada.' });
               return;
             }
 
+            const peerName = decoded.globalName || decoded.username || name || 'Membro';
+            const peerAvatar = decoded.avatarUrl || avatar || '';
+
             currentRoomCode = room.code;
-            addParticipant(room.code, socketId, { name, identity });
+            addParticipant(room.code, socketId, {
+              name: peerName,
+              identity: decoded.userId || identity,
+              avatar: peerAvatar
+            });
 
             // Prepare list of existing participants for this new peer
             const existingPeers = [];

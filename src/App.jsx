@@ -21,8 +21,13 @@ function getRoomCodeFromPath() {
 
 import { isDiscordActivity, initDiscordSdk, getDiscordRoomCode } from './utils/discord';
 import { pingBackend } from './utils/wakeUp';
+import { useAuth } from './context/AuthContext';
+import LoginScreen from './components/LoginScreen';
+import UserHeader from './components/UserHeader';
 
 export default function App() {
+  const { isAuthenticated, loading: authLoading } = useAuth();
+
   // Dispara wake-up preventivo silencioso para o Render assim que a página abre
   useEffect(() => {
     pingBackend();
@@ -144,9 +149,19 @@ export default function App() {
     );
   }
 
+  // Web Browser: Require Discord login and Guild membership
+  if (!isDiscord && !isAuthenticated) {
+    return <LoginScreen />;
+  }
+
   // Active Room Screen (Discord or Web)
   if (currentRoomCode) {
-    return <RoomExperience code={currentRoomCode} onLeave={handleLeaveRoom} />;
+    return (
+      <>
+        {!isDiscord && <UserHeader />}
+        <RoomExperience code={currentRoomCode} onLeave={handleLeaveRoom} />
+      </>
+    );
   }
 
   // Home / Landing Page
@@ -164,6 +179,7 @@ export default function App() {
         minHeight: '100dvh'
       }}
     >
+      {!isDiscord && <UserHeader />}
       <BackgroundRipples />
 
       <div
