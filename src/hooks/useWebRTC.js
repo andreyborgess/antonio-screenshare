@@ -1026,13 +1026,8 @@ export function useWebRTC({ roomCode, displayName }) {
         track.stop();
         removeTrackFromAllPeers(track);
       });
-
-      sendWs({
-        type: 'track-state',
-        isScreenSharing: false
-      });
     }
-  }, [removeTrackFromAllPeers, sendWs]);
+  }, [removeTrackFromAllPeers]);
 
   // Start Screen Sharing with specific constraints
   const startScreenShare = useCallback(async (settings = {}) => {
@@ -1106,17 +1101,12 @@ export function useWebRTC({ roomCode, displayName }) {
       });
       peersRef.current.forEach(({ pc }) => tuneScreenSenders(pc));
 
-      sendWs({
-        type: 'track-state',
-        isScreenSharing: true
-      });
-
       return stream;
     } catch (err) {
       console.warn('Screen share cancelled or failed:', err);
       throw err;
     }
-  }, [addTrackToAllPeers, stopScreenShare, tuneScreenSenders, sendWs]);
+  }, [addTrackToAllPeers, stopScreenShare, tuneScreenSenders]);
 
   // Toggle Camera
   const toggleCamera = useCallback(async () => {
@@ -1128,11 +1118,6 @@ export function useWebRTC({ roomCode, displayName }) {
       stream.getTracks().forEach((track) => {
         track.stop();
         removeTrackFromAllPeers(track);
-      });
-
-      sendWs({
-        type: 'track-state',
-        isCameraOn: false
       });
       return false;
     } else {
@@ -1149,18 +1134,13 @@ export function useWebRTC({ roomCode, displayName }) {
         stream.getTracks().forEach((track) => {
           addTrackToAllPeers(track, stream);
         });
-
-        sendWs({
-          type: 'track-state',
-          isCameraOn: true
-        });
         return true;
       } catch (err) {
         console.error('Camera access denied or unavailable:', err);
         return false;
       }
     }
-  }, [addTrackToAllPeers, removeTrackFromAllPeers, sendWs]);
+  }, [addTrackToAllPeers, removeTrackFromAllPeers]);
 
   // Send Chat Message
   const sendChatMessage = useCallback((text) => {

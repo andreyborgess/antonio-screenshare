@@ -168,20 +168,6 @@ export function setupSignaling(wss) {
             break;
           }
 
-          // Track state updates (e.g. screen sharing started/stopped, camera toggled)
-          case 'track-state': {
-            if (!currentRoomCode) return;
-            broadcastToRoom(wss, socketMap, currentRoomCode, socketId, {
-              type: 'track-state',
-              senderId: socketId,
-              isScreenSharing: msg.isScreenSharing,
-              isCameraOn: msg.isCameraOn,
-              isMicMuted: msg.isMicMuted,
-              isSpeaking: msg.isSpeaking
-            });
-            break;
-          }
-
           // Real-time voice activity detection state (speaking / silent)
           case 'speaking-state': {
             if (!currentRoomCode) return;

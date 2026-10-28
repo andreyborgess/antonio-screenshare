@@ -1,5 +1,4 @@
 // src/utils/discord.js
-import { DiscordSDK, patchUrlMappings } from '@discord/embedded-app-sdk';
 
 let discordSdkInstance = null;
 let isInitialized = false;
@@ -17,9 +16,22 @@ export function isDiscordActivity() {
   );
 }
 
-// Automatically apply Discord URL mapping patches when running inside Discord
-if (typeof window !== 'undefined' && isDiscordActivity()) {
+let sdkModulePromise = null;
+
+// O SDK só é baixado dentro do Discord, quem abre pelo navegador não paga esse peso
+function loadSdkModule() {
+  if (!sdkModulePromise) sdkModulePromise = import('@discord/embedded-app-sdk');
+  return sdkModulePromise;
+}
+
+/**
+ * Applies Discord URL mapping patches when running inside Discord.
+ * Must be awaited before the app renders (see main.jsx).
+ */
+export async function prepareDiscord() {
+  if (!isDiscordActivity()) return;
   try {
+    const { patchUrlMappings } = await loadSdkModule();
     patchUrlMappings([
       { prefix: '/api', target: 'antonio-screenshare.onrender.com' },
       { prefix: '/ws', target: 'antonio-screenshare.onrender.com' }
@@ -83,6 +95,7 @@ export async function initDiscordSdk() {
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID || '1494510437763514408';
 
   try {
+    const { DiscordSDK } = await loadSdkModule();
     discordSdkInstance = new DiscordSDK(clientId);
     await discordSdkInstance.ready();
     isInitialized = true;
