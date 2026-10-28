@@ -1,6 +1,6 @@
 // src/utils/wakeUp.js
 import { useState, useEffect } from 'react';
-import { getApiBase } from './discord';
+import { getApiBase } from './api';
 
 let globalStatus = 'checking'; // 'checking' | 'waking' | 'awake' | 'error'
 const listeners = new Set();

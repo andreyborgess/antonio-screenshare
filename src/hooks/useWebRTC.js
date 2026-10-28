@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { playMuteSound, playJoinSound, playLeaveSound } from '../utils/sounds';
-import { getApiBase, getWsUrl } from '../utils/discord';
+import { getApiBase, getWsUrl } from '../utils/api';
 
 const AVATAR_COLORS = ['#a78bfa', '#4fe7c4', '#f472b6', '#fb923c', '#60a5fa', '#facc15'];
 
@@ -782,7 +782,7 @@ export function useWebRTC({ roomCode, displayName }) {
           })
         );
 
-        // Evita que proxies (Render/Discord) derrubem o WebSocket ocioso
+        // Evita que proxies (Render) derrubem o WebSocket ocioso
         clearInterval(keepAliveTimer);
         keepAliveTimer = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));

@@ -1,6 +1,6 @@
 // src/context/AuthContext.jsx
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { getApiBase } from '../utils/discord';
+import { getApiBase } from '../utils/api';
 
 const AuthContext = createContext(null);
 

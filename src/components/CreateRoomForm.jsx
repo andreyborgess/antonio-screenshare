@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getApiBase } from '../utils/discord';
+import { getApiBase } from '../utils/api';
 import { useBackendStatus } from '../utils/wakeUp';
 
 export default function CreateRoomForm({ onRoomCreated }) {
