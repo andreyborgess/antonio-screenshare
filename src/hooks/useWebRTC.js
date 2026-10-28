@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { playMuteSound, playJoinSound, playLeaveSound } from '../utils/sounds';
-import { getWsUrl } from '../utils/discord';
+import { getApiBase, getWsUrl } from '../utils/discord';
 
 const AVATAR_COLORS = ['#a78bfa', '#4fe7c4', '#f472b6', '#fb923c', '#60a5fa', '#facc15'];
 
@@ -16,32 +16,34 @@ export function getInitials(name = '') {
   return name.trim().charAt(0).toUpperCase() || '?';
 }
 
-const ICE_SERVERS = {
-  iceServers: [
-    // Google Public STUNs
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    // Metered OpenRelay Public STUN & TURN (UDP & TCP fallback for 4G/5G and restricted firewalls)
-    { urls: 'stun:openrelay.metered.ca:80' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelay',
-      credential: 'openrelay'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelay',
-      credential: 'openrelay'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelay',
-      credential: 'openrelay'
-    }
-  ],
-  iceCandidatePoolSize: 2
-};
+// Usado apenas se o backend não responder /api/ice-servers (TURN configurado via env no servidor)
+const FALLBACK_ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' }
+];
+
+let iceServersPromise = null;
+
+// Busca STUN/TURN no backend (credenciais TURN nunca ficam no bundle do frontend)
+function loadIceServers({ refresh = false } = {}) {
+  if (iceServersPromise && !refresh) return iceServersPromise;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  const token = localStorage.getItem('antonio_token') || '';
+
+  iceServersPromise = fetch(`${getApiBase()}/api/ice-servers`, {
+    cache: 'no-store',
+    signal: controller.signal,
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => (Array.isArray(data?.iceServers) && data.iceServers.length > 0 ? data.iceServers : FALLBACK_ICE_SERVERS))
+    .catch(() => FALLBACK_ICE_SERVERS)
+    .finally(() => clearTimeout(timeout));
+
+  return iceServersPromise;
+}
 
 // Configura parâmetros de codificação e degradação no RTCRtpSender para evitar queda drástica de FPS
 async function applySenderParameters(sender, track, settings = {}) {
@@ -67,9 +69,8 @@ async function applySenderParameters(sender, track, settings = {}) {
     const maxBitrate = settings?.maxBitrate || 3500000;
     const maxFramerate = settings?.frameRate || 60;
 
-    if (!params.encodings || params.encodings.length === 0) {
-      params.encodings = [{}];
-    }
+    // Antes da negociação alguns navegadores retornam encodings vazio; reaplicamos após a negociação
+    if (!params.encodings || params.encodings.length === 0) return;
 
     params.encodings[0].maxBitrate = maxBitrate;
     params.encodings[0].maxFramerate = maxFramerate;
@@ -79,6 +80,18 @@ async function applySenderParameters(sender, track, settings = {}) {
     await sender.setParameters(params);
   } catch (err) {
     console.warn('Unable to apply video sender parameters:', err);
+  }
+}
+
+async function applyAudioSenderParameters(sender) {
+  try {
+    const params = sender.getParameters();
+    if (!params?.encodings?.length) return;
+    params.encodings[0].maxBitrate = 196000;
+    params.encodings[0].priority = 'high';
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn('Unable to apply audio sender parameters:', err);
   }
 }
 
@@ -157,8 +170,8 @@ export function useWebRTC({ roomCode, displayName }) {
 
   const wsRef = useRef(null);
   const localSocketIdRef = useRef(null);
-  const peerConnectionsRef = useRef(new Map()); // peerSocketId -> RTCPeerConnection
-  const candidateQueueRef = useRef(new Map()); // peerSocketId -> RTCIceCandidate[]
+  const peersRef = useRef(new Map()); // peerSocketId -> { pc, polite, makingOffer, streams, ... }
+  const iceServersRef = useRef(null);
   const screenSettingsRef = useRef(null);
   const screenAnalyserRef = useRef(null);
   const localScreenRef = useRef(null);
@@ -179,9 +192,102 @@ export function useWebRTC({ roomCode, displayName }) {
     }
   }, []);
 
+  // Mapa streamId -> tipo ('screen' | 'camera' | 'mic') enviado junto de cada offer/answer,
+  // para o outro lado saber qual stream remoto é tela, câmera ou microfone
+  const getLocalMediaMap = useCallback(() => {
+    const map = {};
+    if (localScreenRef.current) map[localScreenRef.current.id] = 'screen';
+    if (localCameraRef.current) map[localCameraRef.current.id] = 'camera';
+    if (localMicRef.current) map[localMicRef.current.id] = 'mic';
+    return map;
+  }, []);
+
+  // Recalcula screen/camera/audio de um peer a partir dos streams recebidos
+  const publishRemoteMedia = useCallback((peerId) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer) return;
+
+    let screenStream = null;
+    let cameraStream = null;
+    let audioStream = null;
+    const unknownVideo = [];
+
+    peer.streams.forEach((stream, streamId) => {
+      const hasVideo = stream.getVideoTracks().length > 0;
+      const hasAudio = stream.getAudioTracks().length > 0;
+      const kind = peer.remoteMediaMap[streamId];
+
+      if (kind === 'screen') {
+        if (hasVideo) screenStream = stream;
+      } else if (kind === 'camera') {
+        if (hasVideo) cameraStream = stream;
+      } else if (kind === 'mic') {
+        if (hasAudio) audioStream = stream;
+      } else if (hasVideo) {
+        unknownVideo.push(stream);
+      } else if (hasAudio && !audioStream) {
+        audioStream = stream;
+      }
+    });
+
+    // Peer sem mediaMap (versão antiga): primeiro vídeo é a tela, o segundo a câmera
+    unknownVideo.forEach((stream) => {
+      if (!screenStream) screenStream = stream;
+      else if (!cameraStream) cameraStream = stream;
+    });
+
+    setRemoteStreams((prev) => ({
+      ...prev,
+      [peerId]: { ...prev[peerId], screenStream, cameraStream, audioStream }
+    }));
+  }, []);
+
+  // Aplica bitrate/FPS/prioridade nos senders da tela compartilhada
+  const tuneScreenSenders = useCallback((pc) => {
+    const screen = localScreenRef.current;
+    if (!screen) return;
+    const screenTracks = screen.getTracks();
+    pc.getSenders().forEach((sender) => {
+      if (!sender.track || !screenTracks.includes(sender.track)) return;
+      if (sender.track.kind === 'video') {
+        applySenderParameters(sender, sender.track, screenSettingsRef.current || {});
+      } else {
+        applyAudioSenderParameters(sender);
+      }
+    });
+  }, []);
+
+  const flushPendingCandidates = useCallback(async (peer) => {
+    const queued = peer.pendingCandidates;
+    peer.pendingCandidates = [];
+    for (const cand of queued) {
+      try {
+        await peer.pc.addIceCandidate(cand);
+      } catch (err) {
+        if (!peer.ignoreOffer) console.warn('Error adding queued ICE candidate:', err);
+      }
+    }
+  }, []);
+
+  const closePeer = useCallback((peerId) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer) return;
+    clearTimeout(peer.disconnectTimer);
+    try {
+      peer.pc.close();
+    } catch {}
+    peersRef.current.delete(peerId);
+    setRemoteStreams((prev) => {
+      if (!prev[peerId]) return prev;
+      const updated = { ...prev };
+      delete updated[peerId];
+      return updated;
+    });
+  }, []);
+
   // Update track for all peer connections
   const addTrackToAllPeers = useCallback((track, stream) => {
-    peerConnectionsRef.current.forEach((pc) => {
+    peersRef.current.forEach(({ pc }) => {
       try {
         const senders = pc.getSenders();
         const alreadyAdded = senders.some((s) => s.track && s.track.id === track.id);
@@ -195,7 +301,7 @@ export function useWebRTC({ roomCode, displayName }) {
   }, []);
 
   const removeTrackFromAllPeers = useCallback((track) => {
-    peerConnectionsRef.current.forEach((pc) => {
+    peersRef.current.forEach(({ pc }) => {
       try {
         const senders = pc.getSenders();
         const sender = senders.find((s) => s.track && s.track.id === track.id);
@@ -208,97 +314,148 @@ export function useWebRTC({ roomCode, displayName }) {
     });
   }, []);
 
-  // Initialize or retrieve RTCPeerConnection
-  const getOrCreatePeerConnection = useCallback((targetId, isInitiator = false) => {
-    if (peerConnectionsRef.current.has(targetId)) {
-      return peerConnectionsRef.current.get(targetId);
-    }
+  // Cria (ou reutiliza) a conexão com um peer usando o padrão "perfect negotiation":
+  // os dois lados podem renegociar (ligar tela/câmera/mic) e colisões de offer são resolvidas
+  // pelo lado "polite", que descarta a própria offer e aceita a do outro.
+  const getOrCreatePeer = useCallback((targetId, { initiator = false } = {}) => {
+    const existing = peersRef.current.get(targetId);
+    if (existing) return existing;
 
-    const pc = new RTCPeerConnection(ICE_SERVERS);
-    peerConnectionsRef.current.set(targetId, pc);
+    const pc = new RTCPeerConnection({
+      iceServers: iceServersRef.current || FALLBACK_ICE_SERVERS,
+      iceCandidatePoolSize: 2
+    });
 
-    // Add existing local tracks to the new peer connection
-    if (localMicRef.current) {
-      localMicRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localMicRef.current);
-      });
-    }
-    if (localScreenRef.current) {
-      localScreenRef.current.getTracks().forEach((track) => {
-        const sender = pc.addTrack(track, localScreenRef.current);
-        if (track.kind === 'video' && screenSettingsRef.current) {
-          applySenderParameters(sender, track, screenSettingsRef.current);
-        }
-      });
-    }
-    if (localCameraRef.current) {
-      localCameraRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localCameraRef.current);
-      });
-    }
+    const peer = {
+      pc,
+      polite: (localSocketIdRef.current || '') < targetId,
+      makingOffer: false,
+      ignoreOffer: false,
+      pendingCandidates: [],
+      remoteMediaMap: {},
+      streams: new Map(),
+      disconnectTimer: null
+    };
+    peersRef.current.set(targetId, peer);
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendWs({
-          type: 'ice-candidate',
-          targetId,
-          candidate: event.candidate
-        });
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        sendWs({ type: 'ice-candidate', targetId, candidate: candidate.toJSON() });
       }
     };
 
-    pc.ontrack = (event) => {
-      const [remoteStream] = event.streams;
-      const track = event.track;
-
-      setRemoteStreams((prev) => {
-        const peerData = prev[targetId] || { name: 'Participante' };
-
-        if (track.kind === 'audio') {
-          // Play remote audio automatically
-          return {
-            ...prev,
-            [targetId]: {
-              ...peerData,
-              audioStream: remoteStream
-            }
-          };
-        }
-
-        // If track is video, check if it's likely a screenshare or camera
-        const isScreen = track.kind === 'video' && !peerData.cameraStream;
-        return {
-          ...prev,
-          [targetId]: {
-            ...peerData,
-            screenStream: isScreen ? remoteStream : peerData.screenStream,
-            cameraStream: !isScreen && track.kind === 'video' ? remoteStream : peerData.cameraStream
-          }
-        };
-      });
+    pc.ontrack = ({ track, streams }) => {
+      const stream = streams[0] || new MediaStream([track]);
+      if (!peer.streams.has(stream.id)) {
+        peer.streams.set(stream.id, stream);
+        stream.addEventListener('addtrack', () => publishRemoteMedia(targetId));
+        stream.addEventListener('removetrack', () => {
+          if (stream.getTracks().length === 0) peer.streams.delete(stream.id);
+          publishRemoteMedia(targetId);
+        });
+      }
+      publishRemoteMedia(targetId);
     };
 
     pc.onnegotiationneeded = async () => {
-      if (!isInitiator) return;
       try {
+        peer.makingOffer = true;
         preferH264Codec(pc);
         const offer = await pc.createOffer();
-        if (offer.sdp) {
-          offer.sdp = enrichSdpWithStereoOpus(offer.sdp);
-        }
+        // Uma offer remota pode ter chegado enquanto criávamos a nossa
+        if (pc.signalingState !== 'stable') return;
+        if (offer.sdp) offer.sdp = enrichSdpWithStereoOpus(offer.sdp);
         await pc.setLocalDescription(offer);
         sendWs({
           type: 'offer',
           targetId,
-          offer
+          offer: pc.localDescription,
+          mediaMap: getLocalMediaMap()
         });
       } catch (err) {
         console.error('Negotiation error:', err);
+      } finally {
+        peer.makingOffer = false;
       }
     };
 
-    return pc;
-  }, [sendWs]);
+    pc.onsignalingstatechange = () => {
+      if (pc.signalingState === 'stable') tuneScreenSenders(pc);
+    };
+
+    // Recupera a conexão automaticamente se a rota de rede cair (troca de Wi-Fi/4G, NAT expirado)
+    pc.onconnectionstatechange = () => {
+      clearTimeout(peer.disconnectTimer);
+      if (pc.connectionState === 'failed') {
+        pc.restartIce();
+      } else if (pc.connectionState === 'disconnected') {
+        peer.disconnectTimer = setTimeout(() => {
+          if (pc.connectionState === 'disconnected') pc.restartIce();
+        }, 4000);
+      }
+    };
+
+    // Canal de dados garante que a conexão seja negociada mesmo sem nenhuma mídia local
+    if (initiator) {
+      pc.createDataChannel('control');
+    }
+
+    // Add existing local tracks to the new peer connection
+    [localMicRef.current, localScreenRef.current, localCameraRef.current].forEach((stream) => {
+      if (!stream) return;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    });
+    tuneScreenSenders(pc);
+
+    return peer;
+  }, [sendWs, getLocalMediaMap, publishRemoteMedia, tuneScreenSenders]);
+
+  // Processa offer/answer recebidos (perfect negotiation)
+  const handleRemoteDescription = useCallback(async (senderId, description, mediaMap) => {
+    const peer = getOrCreatePeer(senderId);
+    const { pc } = peer;
+    if (mediaMap) peer.remoteMediaMap = mediaMap;
+
+    if (description.type === 'offer') {
+      const offerCollision = peer.makingOffer || pc.signalingState !== 'stable';
+      peer.ignoreOffer = !peer.polite && offerCollision;
+      if (peer.ignoreOffer) return;
+
+      await pc.setRemoteDescription(description);
+      await flushPendingCandidates(peer);
+
+      preferH264Codec(pc);
+      const answer = await pc.createAnswer();
+      if (answer.sdp) answer.sdp = enrichSdpWithStereoOpus(answer.sdp);
+      await pc.setLocalDescription(answer);
+      sendWs({
+        type: 'answer',
+        targetId: senderId,
+        answer: pc.localDescription,
+        mediaMap: getLocalMediaMap()
+      });
+    } else {
+      if (pc.signalingState !== 'have-local-offer') return;
+      await pc.setRemoteDescription(description);
+      await flushPendingCandidates(peer);
+    }
+
+    publishRemoteMedia(senderId);
+  }, [getOrCreatePeer, flushPendingCandidates, sendWs, getLocalMediaMap, publishRemoteMedia]);
+
+  const handleRemoteCandidate = useCallback(async (senderId, candidate) => {
+    const peer = peersRef.current.get(senderId);
+    if (!peer || !candidate) return;
+    if (!peer.pc.remoteDescription) {
+      peer.pendingCandidates.push(candidate);
+      return;
+    }
+    try {
+      await peer.pc.addIceCandidate(candidate);
+    } catch (err) {
+      if (!peer.ignoreOffer) console.warn('Error adding ICE candidate:', err);
+    }
+  }, []);
 
   // Setup Local Microphone and Voice Activity Detection (VAD)
   useEffect(() => {
@@ -425,266 +582,252 @@ export function useWebRTC({ roomCode, displayName }) {
     };
   }, [roomCode, addTrackToAllPeers, sendWs]);
 
-  // Connect WebSocket & Join Room
+  // Connect WebSocket & Join Room (com reconexão automática)
   useEffect(() => {
     if (!roomCode) return;
 
-    const wsUrl = getWsUrl();
+    let disposed = false;
+    let reconnectTimer = null;
+    let keepAliveTimer = null;
+    let attempts = 0;
+    let ws = null;
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    function resetPeers() {
+      Array.from(peersRef.current.keys()).forEach((peerId) => closePeer(peerId));
+      setRemoteStreams({});
+      setPeerSpeakingMap({});
+      setPeerMicMutedMap({});
+    }
 
-    ws.onopen = () => {
-      setConnectionStatus('connected');
-      const token = localStorage.getItem('antonio_token') || '';
-      let savedUser = {};
-      try {
-        savedUser = JSON.parse(localStorage.getItem('antonio_user') || '{}');
-      } catch {}
+    async function handleMessage(msg) {
+      switch (msg.type) {
+        case 'joined-room': {
+          localSocketIdRef.current = msg.socketId;
+          attempts = 0;
 
-      ws.send(
-        JSON.stringify({
-          type: 'join-room',
-          roomCode,
-          name: displayNameRef.current || savedUser.globalName || savedUser.username || 'Membro',
-          avatar: savedUser.avatarUrl || '',
-          token,
-          identity: savedUser.id || `user_${Math.random().toString(36).slice(2, 8)}`
-        })
-      );
-    };
+          setParticipants([
+            {
+              socketId: msg.socketId,
+              name: displayNameRef.current || 'Anônimo',
+              identity: msg.socketId,
+              isLocal: true
+            },
+            ...msg.peers.map((p) => ({ ...p, isLocal: false }))
+          ]);
 
-    ws.onmessage = async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        switch (msg.type) {
-          case 'joined-room': {
-            localSocketIdRef.current = msg.socketId;
-
-            const currentParticipants = [
-              {
-                socketId: msg.socketId,
-                name: displayNameRef.current || 'Anônimo',
-                identity: msg.socketId,
-                isLocal: true
-              },
-              ...msg.peers.map((p) => ({ ...p, isLocal: false }))
-            ];
-            setParticipants(currentParticipants);
-
-            // Initiate WebRTC connection to all existing peers
-            msg.peers.forEach((peer) => {
-              const pc = getOrCreatePeerConnection(peer.socketId, true);
-              preferH264Codec(pc);
-              pc.createOffer()
-                .then((offer) => {
-                  if (offer.sdp) offer.sdp = enrichSdpWithStereoOpus(offer.sdp);
-                  return pc.setLocalDescription(offer);
-                })
-                .then(() => {
-                  sendWs({
-                    type: 'offer',
-                    targetId: peer.socketId,
-                    offer: pc.localDescription
-                  });
-                })
-                .catch((e) => console.error('Error creating offer for peer:', e));
-            });
-            break;
-          }
-
-          case 'peer-joined': {
-            playJoinSound();
-            setParticipants((prev) => {
-              if (prev.some((p) => p.socketId === msg.peer.socketId)) return prev;
-              return [...prev, { ...msg.peer, isLocal: false }];
-            });
-
-            // Announce in chat
-            setChatMessages((prev) => [
-              ...prev,
-              {
-                id: `sys_join_${Date.now()}_${msg.peer.socketId}`,
-                kind: 'system',
-                text: `${msg.peer.name || 'Alguém'} entrou na sala`,
-                timestamp: Date.now()
-              }
-            ]);
-            break;
-          }
-
-          case 'peer-left': {
-            playLeaveSound();
-            setParticipants((prev) => prev.filter((p) => p.socketId !== msg.socketId));
-
-            // Close WebRTC connection
-            if (peerConnectionsRef.current.has(msg.socketId)) {
-              peerConnectionsRef.current.get(msg.socketId).close();
-              peerConnectionsRef.current.delete(msg.socketId);
-            }
-
-            setRemoteStreams((prev) => {
-              const updated = { ...prev };
-              delete updated[msg.socketId];
-              return updated;
-            });
-
-            setPeerSpeakingMap((prev) => {
-              const updated = { ...prev };
-              delete updated[msg.socketId];
-              return updated;
-            });
-
-            setPeerMicMutedMap((prev) => {
-              const updated = { ...prev };
-              delete updated[msg.socketId];
-              return updated;
-            });
-
-            // Announce in chat
-            const leftName = msg.participant?.name || 'Alguém';
-            setChatMessages((prev) => [
-              ...prev,
-              {
-                id: `sys_leave_${Date.now()}_${msg.socketId}`,
-                kind: 'system',
-                text: `${leftName} saiu da sala`,
-                timestamp: Date.now()
-              }
-            ]);
-            break;
-          }
-
-          case 'peer-name-updated': {
-            setParticipants((prev) =>
-              prev.map((p) => (p.socketId === msg.socketId ? { ...p, name: msg.name } : p))
-            );
-            break;
-          }
-
-          case 'speaking-state': {
-            setPeerSpeakingMap((prev) => ({
-              ...prev,
-              [msg.senderId]: !!msg.isSpeaking
-            }));
-            break;
-          }
-
-          case 'mic-state': {
-            setPeerMicMutedMap((prev) => ({
-              ...prev,
-              [msg.senderId]: !!msg.isMicMuted
-            }));
-            break;
-          }
-
-          case 'reaction': {
-            const reactionItem = {
-              id: msg.id || `react_${Date.now()}_${Math.random()}`,
-              emoji: msg.emoji,
-              senderName: msg.senderName,
-              offsetX: (Math.random() - 0.5) * 70
-            };
-            setActiveReactions((prev) => [...prev, reactionItem]);
-
-            // Auto-remove after animation completes
-            setTimeout(() => {
-              setActiveReactions((prev) => prev.filter((r) => r.id !== reactionItem.id));
-            }, 3200);
-            break;
-          }
-
-          case 'offer': {
-            const pc = getOrCreatePeerConnection(msg.senderId, false);
-            await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
-
-            // Process queued ICE candidates
-            const queued = candidateQueueRef.current.get(msg.senderId) || [];
-            for (const cand of queued) {
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
-            }
-            candidateQueueRef.current.delete(msg.senderId);
-
-            preferH264Codec(pc);
-            const answer = await pc.createAnswer();
-            if (answer.sdp) {
-              answer.sdp = enrichSdpWithStereoOpus(answer.sdp);
-            }
-            await pc.setLocalDescription(answer);
-
-            sendWs({
-              type: 'answer',
-              targetId: msg.senderId,
-              answer
-            });
-            break;
-          }
-
-          case 'answer': {
-            const pc = peerConnectionsRef.current.get(msg.senderId);
-            if (pc) {
-              await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-
-              const queued = candidateQueueRef.current.get(msg.senderId) || [];
-              for (const cand of queued) {
-                await pc.addIceCandidate(new RTCIceCandidate(cand));
-              }
-              candidateQueueRef.current.delete(msg.senderId);
-            }
-            break;
-          }
-
-          case 'ice-candidate': {
-            const pc = peerConnectionsRef.current.get(msg.senderId);
-            if (pc && pc.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            } else {
-              // Queue candidate until remote description is set
-              const q = candidateQueueRef.current.get(msg.senderId) || [];
-              q.push(msg.candidate);
-              candidateQueueRef.current.set(msg.senderId, q);
-            }
-            break;
-          }
-
-          case 'chat-message': {
-            setChatMessages((prev) => [
-              ...prev,
-              {
-                id: msg.id,
-                kind: 'chat',
-                from: msg.senderName,
-                message: msg.message,
-                timestamp: msg.timestamp,
-                isLocal: msg.senderId === localSocketIdRef.current
-              }
-            ]);
-            break;
-          }
-
-          case 'error': {
-            console.error('[WebRTC Server Error]', msg.message);
-            if (msg.code === 'UNAUTHORIZED') {
-              setConnectionStatus('unauthorized');
-            }
-            break;
-          }
+          // Quem entra inicia a conexão com todos que já estão na sala
+          msg.peers.forEach((peer) => {
+            getOrCreatePeer(peer.socketId, { initiator: true });
+          });
+          break;
         }
-      } catch (err) {
-        console.error('WebSocket message parsing error:', err);
+
+        case 'peer-joined': {
+          playJoinSound();
+          setParticipants((prev) => {
+            if (prev.some((p) => p.socketId === msg.peer.socketId)) return prev;
+            return [...prev, { ...msg.peer, isLocal: false }];
+          });
+
+          // Announce in chat
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `sys_join_${Date.now()}_${msg.peer.socketId}`,
+              kind: 'system',
+              text: `${msg.peer.name || 'Alguém'} entrou na sala`,
+              timestamp: Date.now()
+            }
+          ]);
+          break;
+        }
+
+        case 'peer-left': {
+          playLeaveSound();
+          setParticipants((prev) => prev.filter((p) => p.socketId !== msg.socketId));
+          closePeer(msg.socketId);
+
+          setPeerSpeakingMap((prev) => {
+            const updated = { ...prev };
+            delete updated[msg.socketId];
+            return updated;
+          });
+
+          setPeerMicMutedMap((prev) => {
+            const updated = { ...prev };
+            delete updated[msg.socketId];
+            return updated;
+          });
+
+          // Announce in chat
+          const leftName = msg.participant?.name || 'Alguém';
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `sys_leave_${Date.now()}_${msg.socketId}`,
+              kind: 'system',
+              text: `${leftName} saiu da sala`,
+              timestamp: Date.now()
+            }
+          ]);
+          break;
+        }
+
+        case 'peer-name-updated': {
+          setParticipants((prev) =>
+            prev.map((p) => (p.socketId === msg.socketId ? { ...p, name: msg.name } : p))
+          );
+          break;
+        }
+
+        case 'speaking-state': {
+          setPeerSpeakingMap((prev) => ({
+            ...prev,
+            [msg.senderId]: !!msg.isSpeaking
+          }));
+          break;
+        }
+
+        case 'mic-state': {
+          setPeerMicMutedMap((prev) => ({
+            ...prev,
+            [msg.senderId]: !!msg.isMicMuted
+          }));
+          break;
+        }
+
+        case 'reaction': {
+          const reactionItem = {
+            id: msg.id || `react_${Date.now()}_${Math.random()}`,
+            emoji: msg.emoji,
+            senderName: msg.senderName,
+            offsetX: (Math.random() - 0.5) * 70
+          };
+          setActiveReactions((prev) => [...prev, reactionItem]);
+
+          // Auto-remove after animation completes
+          setTimeout(() => {
+            setActiveReactions((prev) => prev.filter((r) => r.id !== reactionItem.id));
+          }, 3200);
+          break;
+        }
+
+        case 'offer': {
+          await handleRemoteDescription(msg.senderId, msg.offer, msg.mediaMap);
+          break;
+        }
+
+        case 'answer': {
+          await handleRemoteDescription(msg.senderId, msg.answer, msg.mediaMap);
+          break;
+        }
+
+        case 'ice-candidate': {
+          await handleRemoteCandidate(msg.senderId, msg.candidate);
+          break;
+        }
+
+        case 'chat-message': {
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: msg.id,
+              kind: 'chat',
+              from: msg.senderName,
+              message: msg.message,
+              timestamp: msg.timestamp,
+              isLocal: msg.senderId === localSocketIdRef.current
+            }
+          ]);
+          break;
+        }
+
+        case 'error': {
+          console.error('[WebRTC Server Error]', msg.message);
+          if (msg.code === 'UNAUTHORIZED') {
+            disposed = true;
+            setConnectionStatus('unauthorized');
+          }
+          break;
+        }
       }
-    };
+    }
 
-    ws.onclose = () => {
-      setConnectionStatus('disconnected');
-    };
+    async function connect() {
+      // Credenciais TURN são renovadas a cada (re)conexão
+      iceServersRef.current = await loadIceServers({ refresh: true });
+      if (disposed) return;
 
-    ws.onerror = () => {
-      setConnectionStatus('error');
-    };
+      ws = new WebSocket(getWsUrl());
+      wsRef.current = ws;
+      // Mensagens de sinalização precisam ser processadas em ordem (offer antes dos candidates)
+      let messageChain = Promise.resolve();
+
+      ws.onopen = () => {
+        setConnectionStatus('connected');
+        const token = localStorage.getItem('antonio_token') || '';
+        let savedUser = {};
+        try {
+          savedUser = JSON.parse(localStorage.getItem('antonio_user') || '{}');
+        } catch {}
+
+        ws.send(
+          JSON.stringify({
+            type: 'join-room',
+            roomCode,
+            name: displayNameRef.current || savedUser.globalName || savedUser.username || 'Membro',
+            avatar: savedUser.avatarUrl || '',
+            token,
+            identity: savedUser.id || `user_${Math.random().toString(36).slice(2, 8)}`
+          })
+        );
+
+        // Evita que proxies (Render/Discord) derrubem o WebSocket ocioso
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+        }, 25000);
+      };
+
+      ws.onmessage = (event) => {
+        let msg;
+        try {
+          msg = JSON.parse(event.data);
+        } catch (err) {
+          console.error('WebSocket message parsing error:', err);
+          return;
+        }
+        messageChain = messageChain
+          .then(() => handleMessage(msg))
+          .catch((err) => console.error(`Error handling "${msg.type}":`, err));
+      };
+
+      ws.onclose = () => {
+        clearInterval(keepAliveTimer);
+        if (wsRef.current === ws) wsRef.current = null;
+        if (disposed) return;
+
+        // O servidor gera um novo socketId a cada conexão, então as conexões P2P antigas são descartadas
+        resetPeers();
+        setParticipants((prev) => prev.filter((p) => p.isLocal));
+        setConnectionStatus('reconnecting');
+        const delay = Math.min(10000, 1000 * 2 ** attempts);
+        attempts++;
+        reconnectTimer = setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => {
+        console.warn('WebSocket error, aguardando reconexão...');
+      };
+    }
+
+    setConnectionStatus('connecting');
+    connect();
 
     return () => {
+      disposed = true;
+      clearTimeout(reconnectTimer);
+      clearInterval(keepAliveTimer);
       // Cleanup connections
       if (localScreenRef.current) {
         localScreenRef.current.getTracks().forEach((t) => t.stop());
@@ -695,18 +838,17 @@ export function useWebRTC({ roomCode, displayName }) {
       if (localMicRef.current) {
         localMicRef.current.getTracks().forEach((t) => t.stop());
       }
-      peerConnectionsRef.current.forEach((pc) => pc.close());
-      peerConnectionsRef.current.clear();
-      ws.close();
+      resetPeers();
+      if (ws) ws.close();
     };
-  }, [roomCode, getOrCreatePeerConnection, sendWs]);
+  }, [roomCode, getOrCreatePeer, closePeer, handleRemoteDescription, handleRemoteCandidate]);
 
   // Periodically collect WebRTC connection statistics (RTT / Ping and FPS)
   useEffect(() => {
     if (!roomCode) return;
 
     const statsInterval = setInterval(async () => {
-      if (peerConnectionsRef.current.size === 0) {
+      if (peersRef.current.size === 0) {
         setNetworkStats({
           ping: null,
           fps: null,
@@ -733,7 +875,7 @@ export function useWebRTC({ roomCode, displayName }) {
 
       const now = Date.now();
 
-      for (const pc of peerConnectionsRef.current.values()) {
+      for (const { pc } of peersRef.current.values()) {
         if (pc.connectionState !== 'connected') continue;
         try {
           const stats = await pc.getStats();
@@ -868,11 +1010,33 @@ export function useWebRTC({ roomCode, displayName }) {
     }
   }, [sendWs]);
 
+  // Stop Screen Sharing
+  const stopScreenShare = useCallback(() => {
+    screenSettingsRef.current = null;
+    screenAnalyserRef.current = null;
+    setAudioLevels((prev) => ({ ...prev, screen: 0 }));
+
+    if (localScreenRef.current) {
+      const stream = localScreenRef.current;
+      // Limpa a ref antes do removeTrack para que a renegociação já envie o mediaMap sem a tela
+      localScreenRef.current = null;
+      setLocalScreenStream(null);
+      stream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+        removeTrackFromAllPeers(track);
+      });
+
+      sendWs({
+        type: 'track-state',
+        isScreenSharing: false
+      });
+    }
+  }, [removeTrackFromAllPeers, sendWs]);
+
   // Start Screen Sharing with specific constraints
   const startScreenShare = useCallback(async (settings = {}) => {
     try {
-      screenSettingsRef.current = settings;
-
       const constraints = {
         video: {
           width: { ideal: settings.width || 1920 },
@@ -883,10 +1047,19 @@ export function useWebRTC({ roomCode, displayName }) {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false
-        } : false
+        } : false,
+        // Chrome: permite capturar o áudio do sistema ao compartilhar a tela inteira
+        ...(settings.audio ? { systemAudio: 'include' } : {}),
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include'
       };
 
       const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+
+      // Trocar de tela sem parar antes deixaria senders órfãos nas conexões
+      if (localScreenRef.current) stopScreenShare();
+
+      screenSettingsRef.current = settings;
       setLocalScreenStream(stream);
       localScreenRef.current = stream;
 
@@ -898,7 +1071,7 @@ export function useWebRTC({ roomCode, displayName }) {
         } catch {}
 
         videoTrack.onended = () => {
-          stopScreenShare();
+          if (localScreenRef.current === stream) stopScreenShare();
         };
       }
 
@@ -927,36 +1100,11 @@ export function useWebRTC({ roomCode, displayName }) {
         }
       }
 
-      // Add tracks to all peer connections
+      // Add tracks to all peer connections (a renegociação dispara sozinha via onnegotiationneeded)
       stream.getTracks().forEach((track) => {
         addTrackToAllPeers(track, stream);
       });
-
-      // Apply sender optimization (FPS preservation & bitrate capping) to all active connections
-      peerConnectionsRef.current.forEach(async (pc) => {
-        try {
-          const senders = pc.getSenders();
-          if (videoTrack) {
-            const vSender = senders.find((s) => s.track && s.track.id === videoTrack.id);
-            if (vSender) {
-              await applySenderParameters(vSender, videoTrack, settings);
-            }
-          }
-          if (audioTrack) {
-            const aSender = senders.find((s) => s.track && s.track.id === audioTrack.id);
-            if (aSender) {
-              const p = aSender.getParameters();
-              if (p && p.encodings && p.encodings.length > 0) {
-                p.encodings[0].maxBitrate = 196000;
-                p.encodings[0].priority = 'high';
-                aSender.setParameters(p);
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('Error configuring sender params for peer:', e);
-        }
-      });
+      peersRef.current.forEach(({ pc }) => tuneScreenSenders(pc));
 
       sendWs({
         type: 'track-state',
@@ -968,39 +1116,19 @@ export function useWebRTC({ roomCode, displayName }) {
       console.warn('Screen share cancelled or failed:', err);
       throw err;
     }
-  }, [addTrackToAllPeers, sendWs]);
-
-  // Stop Screen Sharing
-  const stopScreenShare = useCallback(() => {
-    screenSettingsRef.current = null;
-    screenAnalyserRef.current = null;
-    setAudioLevels((prev) => ({ ...prev, screen: 0 }));
-
-    if (localScreenRef.current) {
-      localScreenRef.current.getTracks().forEach((track) => {
-        track.stop();
-        removeTrackFromAllPeers(track);
-      });
-      localScreenRef.current = null;
-      setLocalScreenStream(null);
-
-      sendWs({
-        type: 'track-state',
-        isScreenSharing: false
-      });
-    }
-  }, [removeTrackFromAllPeers, sendWs]);
+  }, [addTrackToAllPeers, stopScreenShare, tuneScreenSenders, sendWs]);
 
   // Toggle Camera
   const toggleCamera = useCallback(async () => {
     if (localCameraRef.current) {
       // Turn off
-      localCameraRef.current.getTracks().forEach((track) => {
+      const stream = localCameraRef.current;
+      localCameraRef.current = null;
+      setLocalCameraStream(null);
+      stream.getTracks().forEach((track) => {
         track.stop();
         removeTrackFromAllPeers(track);
       });
-      localCameraRef.current = null;
-      setLocalCameraStream(null);
 
       sendWs({
         type: 'track-state',

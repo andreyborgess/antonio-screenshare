@@ -16,12 +16,22 @@ function RemoteAudio({ stream, volume = 1 }) {
   const audioRef = useRef(null);
 
   useEffect(() => {
-    if (audioRef.current && stream) {
-      audioRef.current.srcObject = stream;
-      audioRef.current.play().catch((err) => {
-        console.warn('Audio play autoplay policy warning:', err);
-      });
-    }
+    const audioEl = audioRef.current;
+    if (!audioEl || !stream) return;
+    audioEl.srcObject = stream;
+
+    // Se o navegador bloquear o autoplay, tenta de novo na primeira interação do usuário
+    const retry = () => audioEl.play().catch(() => {});
+    audioEl.play().catch((err) => {
+      console.warn('Audio play autoplay policy warning:', err);
+      document.addEventListener('pointerdown', retry, { once: true });
+      document.addEventListener('keydown', retry, { once: true });
+    });
+
+    return () => {
+      document.removeEventListener('pointerdown', retry);
+      document.removeEventListener('keydown', retry);
+    };
   }, [stream]);
 
   useEffect(() => {
@@ -485,7 +495,7 @@ export default function RoomExperience({ code, onLeave }) {
                 boxShadow: connectionStatus === 'connected' ? '0 0 8px var(--signal)' : 'none'
               }}
             />
-            {connectionStatus === 'connected' ? 'ao vivo' : connectionStatus}
+            {{ connected: 'ao vivo', connecting: 'conectando', reconnecting: 'reconectando' }[connectionStatus] || connectionStatus}
           </span>
 
           {connectionStatus === 'connected' && networkStats?.ping !== null && (

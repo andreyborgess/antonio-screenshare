@@ -5,6 +5,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createRoom, getRoom, verifyRoomPassword } from './rooms.js';
 import { setupSignaling } from './signaling.js';
+import { getIceServers, isTurnConfigured } from './ice.js';
 import {
   exchangeDiscordCode,
   fetchDiscordUser,
@@ -74,6 +75,14 @@ app.get(['/api/auth/me', '/auth/me'], (req, res) => {
       avatarUrl: decoded.avatarUrl
     }
   });
+});
+
+// API: STUN/TURN para o WebRTC (TURN só para sessões autenticadas, para ninguém consumir a banda do relay)
+app.get(['/api/ice-servers', '/ice-servers'], async (req, res) => {
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const iceServers = await getIceServers({ includeTurn: !!verifySessionToken(token) });
+  res.set('Cache-Control', 'no-store');
+  return res.status(200).json({ iceServers });
 });
 
 // API: Health / Ping (Used for preventing/detecting Render cold starts)
@@ -168,5 +177,8 @@ setupSignaling(wss);
 server.listen(PORT, () => {
   console.log(`🚀 Antonio Screenshare backend running at http://localhost:${PORT}`);
   console.log(`📡 WebSocket signaling active at ws://localhost:${PORT}/ws`);
+  if (!isTurnConfigured()) {
+    console.warn('⚠️  Nenhum servidor TURN configurado: usuários atrás de CGNAT/4G podem não conseguir ver a tela. Veja server/ice.js.');
+  }
 });
 

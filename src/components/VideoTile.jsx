@@ -35,6 +35,7 @@ function VideoTile({
   const [isMuted, setIsMuted] = useState(false);
   const [hasAudioTrack, setHasAudioTrack] = useState(false);
   const [isPiP, setIsPiP] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const isPiPSupported = typeof document !== 'undefined' && !!document.pictureInPictureEnabled;
 
   useEffect(() => {
@@ -67,12 +68,39 @@ function VideoTile({
   }
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      const audioTracks = stream.getAudioTracks();
-      setHasAudioTrack(audioTracks.length > 0 && !isLocal);
-    }
+    const videoEl = videoRef.current;
+    if (!videoEl || !stream) return;
+
+    videoEl.srcObject = stream;
+
+    // O áudio da tela pode chegar depois do vídeo no mesmo stream
+    const syncAudio = () => setHasAudioTrack(stream.getAudioTracks().length > 0 && !isLocal);
+    syncAudio();
+    stream.addEventListener('addtrack', syncAudio);
+    stream.addEventListener('removetrack', syncAudio);
+
+    // Sem interação prévia o navegador bloqueia vídeo com som: toca mudo e pede um clique para liberar o áudio
+    videoEl.play().catch((err) => {
+      if (err?.name !== 'NotAllowedError' || isLocal) return;
+      videoEl.muted = true;
+      setAutoplayBlocked(true);
+      videoEl.play().catch(() => {});
+    });
+
+    return () => {
+      stream.removeEventListener('addtrack', syncAudio);
+      stream.removeEventListener('removetrack', syncAudio);
+    };
   }, [stream, isLocal]);
+
+  function unlockAudio(e) {
+    e.stopPropagation();
+    if (videoRef.current) {
+      videoRef.current.muted = false;
+      videoRef.current.play().catch(() => {});
+    }
+    setAutoplayBlocked(false);
+  }
 
   useEffect(() => {
     if (videoRef.current && !isLocal) {
@@ -122,6 +150,29 @@ function VideoTile({
           objectFit: source === 'screen' ? 'contain' : 'cover'
         }}
       />
+
+      {autoplayBlocked && hasAudioTrack && (
+        <button
+          type="button"
+          onClick={unlockAudio}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 13,
+            padding: '0.6rem 1rem',
+            borderRadius: '0.5rem',
+            backgroundColor: 'rgba(7, 8, 11, 0.85)',
+            color: 'var(--paper)',
+            border: '1px solid var(--signal)',
+            cursor: 'pointer',
+            fontSize: '0.875rem'
+          }}
+        >
+          Clique para ativar o som
+        </button>
+      )}
 
       {/* Picture-in-Picture Button */}
       {isPiPSupported && (

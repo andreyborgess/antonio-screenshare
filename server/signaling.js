@@ -7,7 +7,22 @@ export function setupSignaling(wss) {
   const socketMap = new Map();
   let idCounter = 1;
 
+  // Derruba conexões mortas (aba fechada sem close, queda de rede) para não deixar participantes fantasmas
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      try { ws.ping(); } catch {}
+    }
+  }, 30000);
+  wss.on('close', () => clearInterval(heartbeat));
+
   wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
     const socketId = `peer_${Date.now().toString(36)}_${idCounter++}`;
     socketMap.set(ws, socketId);
     let currentRoomCode = null;
@@ -23,6 +38,10 @@ export function setupSignaling(wss) {
         const msg = JSON.parse(raw.toString());
 
         switch (msg.type) {
+          // Keep-alive do cliente (evita que proxies derrubem o WebSocket ocioso)
+          case 'ping':
+            break;
+
           case 'join-room': {
             const { roomCode, name, identity, token, avatar } = msg;
 
@@ -74,43 +93,42 @@ export function setupSignaling(wss) {
             // Notify everyone else in this room that a new peer joined
             broadcastToRoom(wss, socketMap, room.code, socketId, {
               type: 'peer-joined',
-              peer: { socketId, name, identity }
+              peer: { socketId, name: peerName, identity: decoded.userId || identity }
             });
             break;
           }
 
           // Relay WebRTC Offer
           case 'offer': {
-            const { targetId, offer, streamType } = msg;
+            const { targetId, offer, mediaMap } = msg;
             sendToSocket(wss, socketMap, targetId, {
               type: 'offer',
               senderId: socketId,
               offer,
-              streamType
+              mediaMap
             });
             break;
           }
 
           // Relay WebRTC Answer
           case 'answer': {
-            const { targetId, answer, streamType } = msg;
+            const { targetId, answer, mediaMap } = msg;
             sendToSocket(wss, socketMap, targetId, {
               type: 'answer',
               senderId: socketId,
               answer,
-              streamType
+              mediaMap
             });
             break;
           }
 
           // Relay ICE candidate
           case 'ice-candidate': {
-            const { targetId, candidate, streamType } = msg;
+            const { targetId, candidate } = msg;
             sendToSocket(wss, socketMap, targetId, {
               type: 'ice-candidate',
               senderId: socketId,
-              candidate,
-              streamType
+              candidate
             });
             break;
           }
